@@ -8,6 +8,8 @@ import sys
 import threading
 from pathlib import Path
 
+# Show emoji/accents correctly in the Windows console.
+sys.stdout.reconfigure(encoding="utf-8")
 # Let this script import the "moiragen" package from the project folder.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

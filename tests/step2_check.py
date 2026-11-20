@@ -14,6 +14,8 @@ from pathlib import Path
 # Point memory at a temporary folder BEFORE importing moiragen.
 # (load_dotenv does not override variables that are already set.)
 os.environ["MEMORY_DIR"] = tempfile.mkdtemp(prefix="moiragen_test_")
+# Show emoji/accents correctly in the Windows console.
+sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from moiragen.nanite import Nanite, load_all, NANITE_DIR
