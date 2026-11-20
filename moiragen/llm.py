@@ -43,6 +43,10 @@ def think(
     max_tokens: rough cap on reply length.
     system: optional instructions placed before the conversation.
 
+    Note: Ollama has a "format": "json" option, but with gemma3:4b it can
+    get stuck repeating tokens, so we ask for JSON in the prompt instead
+    and read it carefully (see mother.parse_choice).
+
     Returns {"text": reply, "seconds": time taken, "waited": time spent
     waiting for another mind to finish}.
     """
@@ -60,11 +64,18 @@ def think(
     queued_at = time.time()
     with _brain_lock:  # wait our turn
         started_at = time.time()
-        try:
-            r = requests.post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=180)
-            r.raise_for_status()
-        except requests.RequestException as e:
-            raise BrainError(f"Could not reach Ollama at {OLLAMA_HOST}: {e}") from e
+        r = None
+        for attempt in (1, 2):  # a hiccup in Ollama gets one retry
+            try:
+                r = requests.post(f"{OLLAMA_HOST}/api/chat", json=payload, timeout=180)
+            except requests.RequestException as e:
+                raise BrainError(f"Could not reach Ollama at {OLLAMA_HOST}: {e}") from e
+            if r.ok:
+                break
+            if attempt == 2:
+                # Show Ollama's own error message, it says what went wrong.
+                raise BrainError(f"Ollama error {r.status_code}: {r.text[:300]}")
+            time.sleep(1)
         finished_at = time.time()
 
     text = r.json()["message"]["content"].strip()
