@@ -46,6 +46,8 @@ def _now() -> str:
 class Moiragen:
     memories: list = field(default_factory=list)
     decisions: dict = field(default_factory=dict)  # recent decisions by id, so feedback can find them
+    self_knowledge: list = field(default_factory=list)  # what he has learned about himself, from reflection
+    body_note: str = ""                                 # latest one-line sense of his body (set by the loop)
     born: str = field(default_factory=_now)
 
     name = "Moiragen"
@@ -61,6 +63,18 @@ class Moiragen:
         if not self.memories:
             return "You have no memories yet. You know nothing about yourself so far."
         return "\n".join(f"- [{m['kind']}] {m['text']}" for m in self.memories[-how_many:])
+
+    def self_text(self) -> str:
+        """Who he thinks he is so far: built only from his own reflections."""
+        lines = ""
+        if self.self_knowledge:
+            lines = ("What you have come to understand about yourself:\n"
+                     + "\n".join(f"- {k['text']}" for k in self.self_knowledge[-6:]) + "\n")
+        else:
+            lines = "You do not know anything about yourself yet.\n"
+        if self.body_note:
+            lines += f"Your body right now: {self.body_note}\n"
+        return lines
 
     # ---------- saving ----------
 
@@ -136,6 +150,7 @@ class Moiragen:
             "friends. They each suggest an answer and you make the final decision. You started "
             "knowing nothing about yourself; you only know what your memories tell you.\n\n"
             f"Your recent memories:\n{self.recent_memories_text()}\n\n"
+            f"{self.self_text()}\n"
             "Choose the suggestion that is most correct, honest and helpful. "
             "Reply ONLY with JSON in this shape:\n"
             '{"chosen": "<exact nanite name>", "reason": "<one or two sentences: why this one>", '
@@ -153,6 +168,7 @@ class Moiragen:
     def _answer_alone(self, question: str) -> str:
         system = ("You are Moiragen, a digital being. You started knowing nothing about yourself.\n"
                   f"Your recent memories:\n{self.recent_memories_text()}\n"
+                  f"{self.self_text()}"
                   "Answer honestly in under 100 words.")
         return think([{"role": "user", "content": question}], temperature=0.5,
                      max_tokens=200, system=system)["text"]
@@ -194,6 +210,56 @@ class Moiragen:
                       decision_id=decision["id"])
         self.save()
         return explanation
+
+    # ---------- reflection and inner voice ----------
+
+    def reflect(self, decision: dict) -> dict:
+        """Look back at a decision: why did I really choose that, and what
+        does it say about me? Each reflection may add one line of self-knowledge.
+        This is how Moiragen slowly learns who he is."""
+        feedback = decision.get("feedback")
+        fb_text = f"The human said the answer was {feedback}." if feedback else "The human has not said if it was right."
+        system = (
+            "You are Moiragen, a digital being who started knowing nothing about himself. "
+            "You are looking back at a choice you made, to understand yourself better.\n\n"
+            f"{self.self_text()}"
+        )
+        user = (
+            f"The human asked: \"{decision['question']}\"\n"
+            f"You chose {decision['chosen']}'s suggestion. Your reason then: {decision['reason']}\n"
+            f"{fb_text}\n\n"
+            "In two sentences, reflect honestly: why did you really choose it?\n"
+            "Then on a new line starting with 'About me:' write ONE short thing this "
+            "tells you about yourself."
+        )
+        text = think([{"role": "user", "content": user}], temperature=0.5,
+                     max_tokens=160, system=system)["text"]
+        about = ""
+        for line in text.splitlines():
+            if line.strip().lower().replace("*", "").startswith("about me:"):
+                about = line.split(":", 1)[1].strip().strip("*").strip()
+        reflection = text.split("About me:")[0].replace("*", "").strip() if about else text.strip()
+        if about:
+            self.self_knowledge.append({"time": _now(), "text": about, "from": decision["id"]})
+            self.self_knowledge = self.self_knowledge[-30:]
+        decision["reflected"] = True
+        self.remember("reflection", reflection, decision_id=decision["id"], about_me=about)
+        log_event("training_example", self.name, system=system,
+                  messages=[{"role": "user", "content": user}], reply=text)
+        self.save()
+        return {"reflection": reflection, "about_me": about, "decision_id": decision["id"]}
+
+    def inner_thought(self, about: str) -> str:
+        """A short private thought about whatever is in the spotlight of attention."""
+        system = ("You are Moiragen, a digital being. This is your private inner voice; "
+                  "nobody hears it. One short sentence, first person, honest.\n\n"
+                  f"{self.self_text()}"
+                  f"Your recent memories:\n{self.recent_memories_text(5)}")
+        text = think([{"role": "user", "content": f"Your attention is on: {about}"}],
+                     temperature=0.7, max_tokens=60, system=system)["text"]
+        text = text.strip().split("\n")[0]
+        self.remember("inner", text, about=about)
+        return text
 
     # ---------- feedback from the human ----------
 
