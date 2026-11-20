@@ -96,22 +96,33 @@ class Moiragen:
 
     # ---------- deciding ----------
 
-    def decide(self, question: str, nanites: dict[str, Nanite]) -> dict:
+    def decide(self, question: str, nanites: dict[str, Nanite], notify=None) -> dict:
         """Ask the nanites, choose the best suggestion, and answer.
+
+        notify: optional function notify(event_type, **data), called as things
+                happen ("thinking", "suggestion", "choosing"), so the viewer can
+                show each suggestion the moment it arrives.
 
         Returns a dict with: id, question, suggestions, chosen, reason, answer.
         """
+        notify = notify or (lambda *a, **k: None)
+
         # 1. Gather suggestions from every nanite that is awake enough.
         ask = (f"The human asked us: \"{question}\"\n"
                f"What answer do you suggest? Give your best answer directly.")
         suggestions = []
         for n in nanites.values():
+            notify("thinking", who=n.name, about=question)
             out = nanite_think(n, ask, from_who="Moiragen")
             if out["rested"]:
+                notify("suggestion", nanite_id=n.id, nanite=n.name, text=out["reply"], rested=True)
                 continue  # too tired, it sat this one out
-            suggestions.append({"nanite_id": n.id, "nanite": n.name, "text": out["reply"]})
+            s = {"nanite_id": n.id, "nanite": n.name, "text": out["reply"]}
+            suggestions.append(s)
+            notify("suggestion", question=question, **s)
 
         # 2. Choose.
+        notify("thinking", who="Moiragen", about=question)
         if not suggestions:
             # Everyone is resting: Moiragen answers alone.
             choice = {"chosen": None, "reason": "All my nanites were resting, so I answered alone.",
@@ -203,7 +214,9 @@ class Moiragen:
                 f"You chose {decision['chosen']}, who said:\n{winner}\n\n"
                 f"Your reason then: {decision['reason']}\n\n"
                 f"{asker} said:\n{their_text}\n\n"
-                f"{asker} asks: why did you choose {decision['chosen']} instead of me?")
+                f"{asker} asks: why did you choose {decision['chosen']} instead of me?\n\n"
+                f"You are talking to {asker}, not to {decision['chosen']}. "
+                f"Speak to {asker} directly, as \"you\".")
         explanation = think([{"role": "user", "content": user}], temperature=0.4,
                             max_tokens=160, system=system)["text"]
         self.remember("explained", f"{asker} asked why I chose {decision['chosen']}. I said: {explanation}",

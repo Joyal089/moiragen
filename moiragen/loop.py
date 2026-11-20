@@ -164,6 +164,7 @@ class Mind:
     def handle_chat(self, nanite_id: str, text: str) -> dict:
         n = self.nanites[nanite_id]
         self.emit("chat", **{"from": "user", "to": n.name, "text": text})
+        self.emit("thinking", who=n.name, about=text)
         out = nanite_think(n, text)
         self.emit("chat", **{"from": n.name, "to": "user", "text": out["reply"]})
         self.stage.post(n.name, "chat", f"The human talked to me: {text}", 0.6)
@@ -190,7 +191,7 @@ class Mind:
     def handle_question(self, text: str) -> dict:
         self.emit("question", text=text)
         self.stage.post("user", "question", text, 1.0)
-        d = self.moiragen.decide(text, self.nanites)
+        d = self.moiragen.decide(text, self.nanites, notify=self.emit)
         self.emit("decision", **d)
         self.stage.post("Moiragen", "decision",
                         f"I chose {d['chosen']}'s idea for \"{text}\": {d['reason']}", 0.9,

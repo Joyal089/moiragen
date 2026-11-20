@@ -1,55 +1,103 @@
 <!doctype html>
-<!-- Temporary page for step 8: shows the raw live event stream.
-     Step 9 replaces this with the real 2D viewer. -->
+<!--
+  Moiragen's viewer.
+  - index.html  the layout (this file)
+  - style.css   how it looks
+  - app.js      what it does: listens to the live event stream and draws it
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Moiragen Events</title>
-<style>
-  body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; background: #111; color: #ddd; }
-  #status { color: #8c8; } #log div { border-bottom: 1px solid #333; padding: 4px 0; }
-  .t { color: #888; } .k { color: #7af; font-weight: 600; }
-  form { margin: 8px 0; display: flex; gap: 8px; } input { flex: 1; padding: 6px; }
-</style>
+<title>Moiragen</title>
+<link rel="stylesheet" href="/viewer/style.css">
 </head>
 <body>
-<h1>Moiragen live events</h1>
-<p id="status">connecting...</p>
-<form id="ask"><input id="q" placeholder="Ask Moiragen something"><button>Ask</button></form>
-<div id="log"></div>
-<script>
-  const log = document.getElementById("log");
-  const status = document.getElementById("status");
 
-  // Show one event at the top of the list (skip the big "vitals" snapshots).
-  function show(e) {
-    if (e.type === "vitals" || e.type === "body") return;
-    const text = e.text || e.answer || e.reflection || e.reason || "";
-    const who = e.from ? `${e.from} → ${e.to}` : (e.source || "");
-    const div = document.createElement("div");
-    div.innerHTML = `<span class="t">${(e.time || "").slice(11, 19)}</span>
-      <span class="k">${e.type}${e.action ? ":" + e.action : ""}</span> ${who} `;
-    div.append(document.createTextNode(text));  // text, never HTML, for safety
-    log.prepend(div);
-  }
+<header class="topbar">
+  <div class="brand">
+    <span class="dot" id="conn" title="connection"></span>
+    <h1>Moiragen</h1>
+  </div>
+  <div class="bodybar" id="bodybar">waking up…</div>
+</header>
 
-  function connect() {
-    const ws = new WebSocket(`ws://${location.host}/ws`);
-    ws.onopen = () => status.textContent = "connected";
-    ws.onclose = () => { status.textContent = "disconnected, retrying..."; setTimeout(connect, 2000); };
-    ws.onmessage = (m) => show(JSON.parse(m.data));
-  }
-  connect();
+<main class="layout">
 
-  document.getElementById("ask").onsubmit = async (ev) => {
-    ev.preventDefault();
-    const q = document.getElementById("q");
-    const text = q.value.trim(); if (!text) return;
-    q.value = "";
-    await fetch("/api/ask", {method: "POST", headers: {"Content-Type": "application/json"},
-                             body: JSON.stringify({text})});
-  };
-</script>
+  <!-- LEFT: the world, where Moiragen and the nanites live -->
+  <section class="world-wrap">
+    <div class="spotlight" id="spotlight">
+      <span class="label">Spotlight</span>
+      <span id="spotlight-text">Nothing has his attention yet.</span>
+    </div>
+
+    <!-- The scene keeps a 4:3 shape so speech bubbles line up with the drawing. -->
+    <div class="scene" id="scene">
+      <svg id="world" viewBox="0 0 800 600" aria-label="Moiragen and his nanites">
+        <defs>
+          <radialGradient id="core" cx="50%" cy="45%" r="60%">
+            <stop offset="0%" stop-color="var(--core-1)"/>
+            <stop offset="100%" stop-color="var(--core-2)"/>
+          </radialGradient>
+        </defs>
+        <g id="friend-lines"></g>   <!-- friendships between nanites -->
+        <g id="links"></g>          <!-- Moiragen to each nanite -->
+        <g id="pulses"></g>         <!-- short-lived lines when someone talks -->
+        <g id="nodes"></g>          <!-- Moiragen and the nanites -->
+      </svg>
+      <div id="bubbles"></div>      <!-- speech bubbles (HTML, so text wraps) -->
+    </div>
+    <p class="hint">Click Moiragen or a nanite to talk to them.</p>
+  </section>
+
+  <!-- RIGHT: decisions, chat and inner life -->
+  <aside class="side">
+
+    <!-- Chat with whoever was clicked -->
+    <section class="card chat" id="chat" hidden>
+      <div class="chat-head">
+        <div>
+          <h2 id="chat-title">Chat</h2>
+          <p class="muted" id="chat-sub"></p>
+        </div>
+        <button class="icon" id="chat-close" aria-label="Close chat">✕</button>
+      </div>
+      <details class="about" id="chat-about"><summary>About</summary><div id="chat-about-body"></div></details>
+      <div class="chat-log" id="chat-log"></div>
+      <form class="chat-form" id="chat-form">
+        <input id="chat-input" autocomplete="off" placeholder="Say something…">
+        <button id="chat-send">Send</button>
+      </form>
+    </section>
+
+    <!-- The latest decision: suggestions, choice, reason -->
+    <section class="card" id="decision">
+      <h2>Latest decision</h2>
+      <p class="muted" id="decision-empty">Click Moiragen and ask him something.</p>
+      <div id="decision-body" hidden>
+        <p class="question" id="d-question"></p>
+        <div id="d-suggestions"></div>
+        <div class="verdict" id="d-verdict" hidden>
+          <p><b>Moiragen chose <span id="d-chosen"></span>.</b> <span id="d-reason"></span></p>
+          <p class="answer" id="d-answer"></p>
+          <div class="feedback" id="d-feedback">
+            <span class="muted">Was he right?</span>
+            <button data-correct="true">Right</button>
+            <button data-correct="false">Wrong</button>
+          </div>
+          <p class="muted" id="d-feedback-result"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Everything else that happens inside him -->
+    <section class="card feed-card">
+      <h2>Inner life</h2>
+      <ol class="feed" id="feed"></ol>
+    </section>
+  </aside>
+</main>
+
+<script src="/viewer/app.js"></script>
 </body>
 </html>
