@@ -1,3 +1,8 @@
 requests>=2.32
 python-dotenv>=1.0
 psutil>=6.0
+# Viewer server (step 8)
+fastapi>=0.115
+uvicorn[standard]>=0.30
+# Only needed for the tests
+httpx>=0.27

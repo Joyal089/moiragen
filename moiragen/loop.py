@@ -29,6 +29,7 @@ import traceback
 
 from .body import Body
 from .memory_log import log_event
+from .mind import nanite_think
 from .mother import Moiragen
 from .nanite import load_all
 from .prediction import Predictor
@@ -64,7 +65,46 @@ class Mind:
         self.last_inner = 0.0
         self._stop = threading.Event()
         self._thread = None
+        self.last_body = self.body.sense()
         self.stage.subscribe(self._on_spotlight)
+        self.last_snapshot = self.snapshot()
+
+    # ---------- a picture of the whole being (for the viewer) ----------
+
+    def snapshot(self) -> dict:
+        """Everything the viewer needs to draw Moiragen and the nanites right now.
+        Built inside the mind's thread and cached, so the web server can read it
+        any time without touching the live objects."""
+        m = self.moiragen
+        nanites = []
+        for n in self.nanites.values():
+            nanites.append({
+                "id": n.id, "name": n.name, "health": n.health, "energy": n.energy, "mood": n.mood,
+                "emotions": {e: s for e, s in n.emotions.items() if s > 0},
+                "feeling": (n.strongest_emotion() or ("calm", 0))[0],
+                "friendships": dict(n.friendships),
+                "temperament": dict(n.temperament),
+                "lessons": [l["lesson"] for l in n.lessons[-5:]],
+                "memories": [f"[{x['kind']}] {x['text']}" for x in n.memories[-5:]],
+            })
+        recent = list(m.decisions.values())[-5:]
+        return {
+            "moiragen": {
+                "name": m.name, "self_knowledge": [k["text"] for k in m.self_knowledge[-6:]],
+                "body_note": m.body_note,
+                "memories": [f"[{x['kind']}] {x['text']}" for x in m.memories[-5:]],
+            },
+            "nanites": nanites,
+            "body": self.last_body,
+            "spotlight": self.stage.spotlight.as_dict() if self.stage.spotlight else None,
+            "stage_history": [t.as_dict() for t in self.stage.history[-10:]],
+            "decisions": recent,
+        }
+
+    def _vitals(self) -> None:
+        """Refresh the cached snapshot and tell listeners (the viewer redraws its bars)."""
+        self.last_snapshot = self.snapshot()
+        self.emit("vitals", **self.last_snapshot)
 
     # ---------- events out ----------
 
@@ -90,23 +130,55 @@ class Mind:
 
     # ---------- questions in ----------
 
-    def ask(self, text: str, timeout: float = 300) -> dict:
-        """Ask Moiragen something from another thread and wait for the decision."""
+    def call(self, fn, *args, timeout: float = 300):
+        """Run fn(*args) inside the mind's own thread and wait for the result.
+
+        Other threads (the terminal, the web server) never touch the nanites
+        directly; they hand jobs to the loop through this inbox instead.
+        """
         reply = queue.Queue(maxsize=1)
-        self.inbox.put(("question", text, reply))
+        self.inbox.put((fn, args, reply))
         result = reply.get(timeout=timeout)
         if isinstance(result, Exception):
             raise result
         return result
 
+    # Friendly shortcuts for other threads:
+    def ask(self, text: str, timeout: float = 300) -> dict:
+        """Ask Moiragen (he listens to the nanites and decides)."""
+        return self.call(self.handle_question, text, timeout=timeout)
+
+    def chat(self, nanite_id: str, text: str, timeout: float = 300) -> dict:
+        """Talk directly to one nanite."""
+        return self.call(self.handle_chat, nanite_id, text, timeout=timeout)
+
+    def give_feedback(self, decision_id: str, correct: bool, note: str = "") -> str:
+        """Tell Moiragen whether a decision was right."""
+        return self.call(self.handle_feedback, decision_id, correct, note)
+
     def request_story(self, timeout: float = 300) -> str | None:
-        """Ask the loop to write today's story now (from another thread) and wait for it."""
-        reply = queue.Queue(maxsize=1)
-        self.inbox.put(("story", None, reply))
-        result = reply.get(timeout=timeout)
-        if isinstance(result, Exception):
-            raise result
-        return result
+        """Write today's story now."""
+        return self.call(self.handle_story, timeout=timeout)
+
+    # The jobs themselves (always run in the mind's thread):
+    def handle_chat(self, nanite_id: str, text: str) -> dict:
+        n = self.nanites[nanite_id]
+        self.emit("chat", **{"from": "user", "to": n.name, "text": text})
+        out = nanite_think(n, text)
+        self.emit("chat", **{"from": n.name, "to": "user", "text": out["reply"]})
+        self.stage.post(n.name, "chat", f"The human talked to me: {text}", 0.6)
+        self._attend()
+        self._vitals()
+        return out
+
+    def handle_feedback(self, decision_id: str, correct: bool, note: str = "") -> str:
+        msg = self.moiragen.feedback(decision_id, correct, self.nanites, note)
+        self.emit("feedback", decision_id=decision_id, correct=correct, note=note, reply=msg)
+        if not correct:
+            self.stage.post("user", "mistake", f"The human said a decision was wrong. {note}", 0.9)
+            self._attend()
+        self._vitals()
+        return msg
 
     def handle_story(self) -> str | None:
         day = date.today().isoformat()
@@ -126,6 +198,7 @@ class Mind:
         for e in after_decision(d, self.nanites, self.moiragen, self.rng):
             self._social(e)
         self._attend()
+        self._vitals()
         return d
 
     # ---------- one tick of life ----------
@@ -135,6 +208,7 @@ class Mind:
 
         # 1. SENSE
         s = self.body.sense()
+        self.last_body = s
         self.moiragen.body_note = self.body.describe(s)
         self.emit("body", **s)
         if s["state"] != "fine":
@@ -176,6 +250,7 @@ class Mind:
         self.moiragen.save()
         for n in self.nanites.values():
             n.save()
+        self._vitals()
 
     def _attend(self) -> None:
         """Let thoughts compete, and react to the winner."""
@@ -219,12 +294,12 @@ class Mind:
     def step(self, wait: float | None = None) -> None:
         """Handle one question if one is waiting (up to `wait` seconds), else tick."""
         try:
-            kind, text, reply = self.inbox.get(timeout=wait if wait is not None else self.tick_seconds)
+            fn, args, reply = self.inbox.get(timeout=wait if wait is not None else self.tick_seconds)
         except queue.Empty:
             self.tick()
             return
         try:
-            reply.put(self.handle_question(text) if kind == "question" else self.handle_story())
+            reply.put(fn(*args))
         except Exception as e:
             reply.put(e)
             raise
@@ -247,5 +322,6 @@ class Mind:
 
     def stop(self, timeout: float = 120) -> None:
         self._stop.set()
+        self.inbox.put((lambda: None, (), queue.Queue(maxsize=1)))  # wake the loop if it is waiting
         if self._thread:
             self._thread.join(timeout)

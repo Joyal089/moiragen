@@ -1,0 +1,55 @@
+<!doctype html>
+<!-- Temporary page for step 8: shows the raw live event stream.
+     Step 9 replaces this with the real 2D viewer. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Moiragen Events</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; margin: 16px; background: #111; color: #ddd; }
+  #status { color: #8c8; } #log div { border-bottom: 1px solid #333; padding: 4px 0; }
+  .t { color: #888; } .k { color: #7af; font-weight: 600; }
+  form { margin: 8px 0; display: flex; gap: 8px; } input { flex: 1; padding: 6px; }
+</style>
+</head>
+<body>
+<h1>Moiragen live events</h1>
+<p id="status">connecting...</p>
+<form id="ask"><input id="q" placeholder="Ask Moiragen something"><button>Ask</button></form>
+<div id="log"></div>
+<script>
+  const log = document.getElementById("log");
+  const status = document.getElementById("status");
+
+  // Show one event at the top of the list (skip the big "vitals" snapshots).
+  function show(e) {
+    if (e.type === "vitals" || e.type === "body") return;
+    const text = e.text || e.answer || e.reflection || e.reason || "";
+    const who = e.from ? `${e.from} → ${e.to}` : (e.source || "");
+    const div = document.createElement("div");
+    div.innerHTML = `<span class="t">${(e.time || "").slice(11, 19)}</span>
+      <span class="k">${e.type}${e.action ? ":" + e.action : ""}</span> ${who} `;
+    div.append(document.createTextNode(text));  // text, never HTML, for safety
+    log.prepend(div);
+  }
+
+  function connect() {
+    const ws = new WebSocket(`ws://${location.host}/ws`);
+    ws.onopen = () => status.textContent = "connected";
+    ws.onclose = () => { status.textContent = "disconnected, retrying..."; setTimeout(connect, 2000); };
+    ws.onmessage = (m) => show(JSON.parse(m.data));
+  }
+  connect();
+
+  document.getElementById("ask").onsubmit = async (ev) => {
+    ev.preventDefault();
+    const q = document.getElementById("q");
+    const text = q.value.trim(); if (!text) return;
+    q.value = "";
+    await fetch("/api/ask", {method: "POST", headers: {"Content-Type": "application/json"},
+                             body: JSON.stringify({text})});
+  };
+</script>
+</body>
+</html>
