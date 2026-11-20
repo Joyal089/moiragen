@@ -15,6 +15,16 @@ from .config import OLLAMA_HOST, OLLAMA_MODEL
 # Only one mind may use the model at a time.
 _brain_lock = threading.Lock()
 
+# Seconds to rest before each thought. The body (body.py) raises this when
+# the GPU is hot or the battery is low, so the hardware gets a breather.
+_cooldown_seconds = 0.0
+
+
+def set_cooldown(seconds: float) -> None:
+    """Called by the body to slow thinking down (0 = full speed)."""
+    global _cooldown_seconds
+    _cooldown_seconds = max(0.0, float(seconds))
+
 
 class BrainError(RuntimeError):
     """Raised when Ollama cannot be reached or returns an error."""
@@ -63,6 +73,8 @@ def think(
 
     queued_at = time.time()
     with _brain_lock:  # wait our turn
+        if _cooldown_seconds:
+            time.sleep(_cooldown_seconds)  # let the GPU cool a little first
         started_at = time.time()
         r = None
         for attempt in (1, 2):  # a hiccup in Ollama gets one retry
