@@ -47,6 +47,7 @@ class Nanite:
     emotions: dict = field(default_factory=dict)     # {"happy": 0.4, ...}
     friendships: dict = field(default_factory=dict)  # {"nanite_two": 50, ...}
     memories: list = field(default_factory=list)     # recent memories
+    lessons: list = field(default_factory=list)      # things it learned; these shape who it becomes
     chosen_name: str | None = None                   # filled in later by the nanite itself
     born: str = field(default_factory=_now)
 
@@ -91,6 +92,13 @@ class Nanite:
         keep = self.blueprint["memory_keep"]
         self.memories = self.memories[-keep:]  # forget the oldest beyond the limit
         log_event(kind, self.name, text=text, **details)
+
+    def learn(self, lesson: str, source: str) -> None:
+        """Keep a lesson. Lessons last longer than ordinary memories and are
+        shown to the nanite every time it thinks, so they slowly shape it."""
+        self.lessons.append({"time": _now(), "lesson": lesson, "source": source})
+        self.lessons = self.lessons[-20:]
+        log_event("lesson", self.name, text=lesson, source=source)
 
     # ---------- body changes ----------
 
@@ -210,6 +218,10 @@ class Nanite:
         n.memories = [
             {"time": e["time"], "kind": e["kind"], "text": e["text"]} for e in recovered
         ][-bp["memory_keep"]:]
+        n.lessons = [
+            {"time": e["time"], "lesson": e["text"], "source": e.get("source", "")}
+            for e in read_events(kind="lesson", who=name, last=20)
+        ]
         n.change_friendship(friend.id, +10)  # it was a friend who saved it
         n.remember("rebuilt", f"I was broken and {friend.name} rebuilt me from the blueprint.", helper=friend.name)
         n.save()

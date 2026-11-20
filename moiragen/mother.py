@@ -174,6 +174,27 @@ class Moiragen:
                            f"His reason: {decision['reason']}",
                            decision_id=decision["id"])
 
+    def explain_choice(self, decision: dict, asker: str, their_text: str) -> str:
+        """A nanite asks why its suggestion lost. Moiragen explains kindly and honestly."""
+        winner = next(s["text"] for s in decision["suggestions"] if s["nanite"] == decision["chosen"])
+        system = (
+            "You are Moiragen, a digital being. The nanites inside you are your friends. "
+            "One of them asks why you did not choose its idea. Explain honestly and kindly in "
+            "two or three sentences: what made the chosen answer better, and one thing that "
+            "would make their answer stronger next time."
+        )
+        user = (f"The human asked: \"{decision['question']}\"\n\n"
+                f"You chose {decision['chosen']}, who said:\n{winner}\n\n"
+                f"Your reason then: {decision['reason']}\n\n"
+                f"{asker} said:\n{their_text}\n\n"
+                f"{asker} asks: why did you choose {decision['chosen']} instead of me?")
+        explanation = think([{"role": "user", "content": user}], temperature=0.4,
+                            max_tokens=160, system=system)["text"]
+        self.remember("explained", f"{asker} asked why I chose {decision['chosen']}. I said: {explanation}",
+                      decision_id=decision["id"])
+        self.save()
+        return explanation
+
     # ---------- feedback from the human ----------
 
     def feedback(self, decision_id: str, correct: bool, nanites: dict[str, Nanite], note: str = "") -> str:

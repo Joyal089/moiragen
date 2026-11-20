@@ -46,6 +46,14 @@ def recent_memories_text(n: Nanite, how_many: int = RECENT_MEMORIES) -> str:
     return "\n".join(lines)
 
 
+def lessons_text(n: Nanite, how_many: int = 5) -> str:
+    """The most recent lessons it has learned, or an empty string."""
+    if not n.lessons:
+        return ""
+    lines = "\n".join(f"- {l['lesson']}" for l in n.lessons[-how_many:])
+    return f"Lessons you have learned from experience:\n{lines}\n\n"
+
+
 def build_system_prompt(n: Nanite) -> str:
     """The instructions the nanite sees before every thought.
 
@@ -58,9 +66,13 @@ def build_system_prompt(n: Nanite) -> str:
         f"The other nanites are your friends. You have no fixed role. You are still "
         f"discovering who you are, only through what you experience.\n\n"
         f"Your body right now: {describe_state(n)}\n"
-        f"Your feelings may show in how you answer, but only as much as you really feel them.\n\n"
+        f"Your feelings may show in how you answer, but only as much as you really feel them. "
+        f"These numbers are for your own awareness; do not recite them.\n\n"
         f"Your recent memories:\n{recent_memories_text(n)}\n\n"
-        f"Speak as yourself, in first person. Be honest; if you do not know, say so. "
+        f"{lessons_text(n)}"
+        f"Speak as yourself, in first person. When someone talks to you, answer them "
+        f"directly as \"you\". Nanites have no gender: call another nanite by name or \"they\". "
+        f"Be honest; if you do not know, say so. "
         f"Only use what is in your memories: do not invent past events, and do not guess "
         f"what the other nanites think or feel unless they have told you. "
         + ("You are tired, so answer in one or two short sentences."
@@ -79,6 +91,8 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
 
     message:  what is said to the nanite
     from_who: who is speaking ("user", "Moiragen", "Nanite Two", ...)
+              or "self" for a private moment where nobody is speaking and
+              the message describes the situation (e.g. "You chose to talk to...")
 
     Returns {"nanite", "reply", "energy_spent", "seconds", "rested"}.
     """
@@ -86,15 +100,21 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
     if n.energy < TOO_TIRED:
         n.rest()
         reply = "I'm too tired to think right now. I need to rest for a moment."
-        n.remember("chat", f"{from_who} said: {message} | I was too tired and rested.", from_who=from_who)
+        n.remember("rest", "I was too tired to think, so I rested.", from_who=from_who)
         if save:
             n.save()
         return {"nanite": n.name, "reply": reply, "energy_spent": 0, "seconds": 0, "rested": True}
 
     # 2. Build the prompt and think, using its own temperature.
     system = build_system_prompt(n)
-    speaker = "Your creator (the human)" if from_who == "user" else from_who
-    messages = [{"role": "user", "content": f"{speaker} says: {message}"}]
+    if from_who == "self":
+        content = (f"(A private moment. Nobody is speaking to you.) {message}\n"
+                   f"Write only the words you say out loud. If you speak to a friend, talk "
+                   f"directly to them as \"you\". No narration, no stage directions.")
+    else:
+        speaker = "Your creator (the human)" if from_who == "user" else from_who
+        content = f"{speaker} says: {message}"
+    messages = [{"role": "user", "content": content}]
     max_tokens = 80 if n.energy < TIRED else 220
     result = think(messages, temperature=n.temperament["temperature"],
                    max_tokens=max_tokens, system=system)
@@ -103,7 +123,10 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
     # 3. Pay the energy cost and remember the conversation.
     cost = round(energy_cost(reply), 2)
     n.spend_energy(cost, "thinking")
-    n.remember("chat", f"{from_who} said: {message} | I replied: {reply}", from_who=from_who)
+    if from_who == "self":
+        n.remember("thought", f"{message} | I said: {reply}")
+    else:
+        n.remember("chat", f"{from_who} said: {message} | I replied: {reply}", from_who=from_who)
 
     # 4. Log the full exchange in a fine-tuning friendly shape.
     log_event("training_example", n.name, system=system, messages=messages, reply=reply,
