@@ -48,4 +48,9 @@ last = read_events(kind="test", last=1)[0]
 assert last["note"] == "foundation works"
 print(f"[ok] Logged and read back: {last}")
 
+# 5. A detail named "kind" or "who" must not crash logging (this once broke chats).
+e = log_event("test", "step1_check", kind="chat", who="someone")
+assert e["kind"] == "test" and e["detail_kind"] == "chat" and e["detail_who"] == "someone"
+print("[ok] Details named 'kind'/'who' are kept safely")
+
 print("\nStep 1 passed.")

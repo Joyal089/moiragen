@@ -168,7 +168,7 @@ class Mind:
         self.emit("thinking", who=n.name, about=text)
         out = nanite_think(n, text)
         self.emit("chat", **{"from": n.name, "to": "user", "text": out["reply"]})
-        self.stage.post(n.name, "chat", f"The human talked to me: {text}", 0.6)
+        self.stage.post(n.name, "chat", f"The human said to {n.name}: \"{text}\"", 0.6)
         self._attend()
         self._vitals()
         return out
@@ -262,7 +262,7 @@ class Mind:
         surprise = self.predictor.events.observe(winner.kind)
         if surprise is not None and surprise >= 0.85 and winner.kind != "surprise":
             expected = self.predictor.events.predict()
-            log_event("event_surprise", "Moiragen", kind=winner.kind, surprise=surprise)
+            log_event("event_surprise", "Moiragen", event_kind=winner.kind, surprise=surprise)
             self.emit("surprise", text=f"I did not expect '{winner.kind}' now.", surprise=surprise,
                       what="event", got=winner.kind, expected=expected)
 

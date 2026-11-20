@@ -20,7 +20,7 @@ const POS = {
 };
 // Where each one's speech bubble goes, so bubbles do not cover each other.
 const BUBBLE_SPOT = {
-  moiragen:     { dx: 0,   dy: 100, place: "below" },
+  moiragen:     { dx: 0,   dy: 128, place: "below" },   // under his name, between the two lower nanites
   nanite_one:   { dx: 62,  dy: 0,   place: "right" },
   nanite_two:   { dx: 0,   dy: -52, place: "above" },
   nanite_three: { dx: 0,   dy: -52, place: "above" },
@@ -186,7 +186,7 @@ function bubble(name, text, kind = "") {
   const p = POS[id], spot = BUBBLE_SPOT[id];
   if (!p || !text) return;
   bubbleEls[id]?.remove();
-  const b = html("div", `bubble ${kind}`);
+  const b = html("div", `bubble ${kind} ${id === "moiragen" ? "narrow" : ""}`);
   b.append(html("span", "who", name), document.createTextNode(shorten(text)));
   b.style.left = `${((p.x + spot.dx) / 800) * 100}%`;
   b.style.top = `${((p.y + spot.dy) / 600) * 100}%`;

@@ -22,13 +22,20 @@ LOG_FILE = MEMORY_DIR / "log.jsonl"
 _lock = threading.Lock()
 
 
-def log_event(kind: str, who: str, **details) -> dict:
+def log_event(kind: str, who: str, /, **details) -> dict:
     """Write one event to the life log and return it.
 
     kind:    what sort of event ("chat", "mistake", "help", "emotion", ...)
     who:     which mind it belongs to ("Moiragen", "Nanite One", "user", ...)
     details: anything else worth remembering (prompt, reply, mood, ...)
+
+    The "/" makes kind and who positional-only, so a detail that happens to be
+    called "kind" or "who" can never crash the call. Such a detail is kept
+    under a "detail_" name instead of overwriting the real kind/who.
     """
+    for key in ("kind", "who"):
+        if key in details:
+            details[f"detail_{key}"] = details.pop(key)
     event = {
         "time": datetime.now().isoformat(timespec="seconds"),
         "kind": kind,
