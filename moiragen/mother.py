@@ -23,7 +23,7 @@ import uuid
 
 from .config import MEMORY_DIR
 from .llm import think
-from .memory_log import log_event
+from .memory_log import log_event, read_events
 from .mind import nanite_think
 from .nanite import Nanite
 
@@ -92,7 +92,29 @@ class Moiragen:
             log_event("birth", "Moiragen", text="Moiragen woke up for the first time.")
             m.save()
             return m
-        return cls(**json.loads(MOIRAGEN_FILE.read_text(encoding="utf-8")))
+        try:
+            return cls(**json.loads(MOIRAGEN_FILE.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, TypeError) as e:
+            return cls._recover(e)
+
+    @classmethod
+    def _recover(cls, error) -> "Moiragen":
+        """His memory file is damaged. Keep the broken file (never delete memories),
+        then rebuild what we can from the life log."""
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        MOIRAGEN_FILE.rename(MOIRAGEN_FILE.with_name(f"moiragen.broken-{stamp}.json"))
+        m = cls()
+        for e in read_events(who="Moiragen", last=5000):
+            if e["kind"] == "reflection" and e.get("about_me"):
+                m.self_knowledge.append({"time": e["time"], "text": e["about_me"], "from": e.get("decision_id", "")})
+            elif "text" in e and e["kind"] not in ("training_example",):
+                m.memories.append({"time": e["time"], "kind": e["kind"], "text": e["text"]})
+        m.memories = m.memories[-MEMORY_KEEP:]
+        m.self_knowledge = m.self_knowledge[-30:]
+        m.remember("rebuilt", f"I woke up with a damaged memory file ({error.__class__.__name__}) "
+                              f"and rebuilt myself from my life log.")
+        m.save()
+        return m
 
     # ---------- deciding ----------
 
@@ -106,6 +128,9 @@ class Moiragen:
         Returns a dict with: id, question, suggestions, chosen, reason, answer.
         """
         notify = notify or (lambda *a, **k: None)
+        # The id is made first, so every training example from this decision
+        # can be tagged with it (and later matched with your right/wrong feedback).
+        decision_id = uuid.uuid4().hex[:8]
 
         # 1. Gather suggestions from every nanite that is awake enough.
         ask = (f"The human asked us: \"{question}\"\n"
@@ -113,7 +138,7 @@ class Moiragen:
         suggestions = []
         for n in nanites.values():
             notify("thinking", who=n.name, about=question)
-            out = nanite_think(n, ask, from_who="Moiragen")
+            out = nanite_think(n, ask, from_who="Moiragen", decision_id=decision_id)
             if out["rested"]:
                 notify("suggestion", nanite_id=n.id, nanite=n.name, text=out["reply"], rested=True)
                 continue  # too tired, it sat this one out
@@ -128,10 +153,10 @@ class Moiragen:
             choice = {"chosen": None, "reason": "All my nanites were resting, so I answered alone.",
                       "answer": self._answer_alone(question)}
         else:
-            choice = self._choose(question, suggestions)
+            choice = self._choose(question, suggestions, decision_id)
 
         decision = {
-            "id": uuid.uuid4().hex[:8],
+            "id": decision_id,
             "time": _now(),
             "question": question,
             "suggestions": suggestions,
@@ -152,7 +177,7 @@ class Moiragen:
             n.save()
         return decision
 
-    def _choose(self, question: str, suggestions: list[dict]) -> dict:
+    def _choose(self, question: str, suggestions: list[dict], decision_id: str = "") -> dict:
         """Ask the model, as Moiragen, to pick one suggestion and explain why."""
         names = [s["nanite"] for s in suggestions]
         listed = "\n\n".join(f"{s['nanite']} suggests:\n{s['text']}" for s in suggestions)
@@ -173,7 +198,8 @@ class Moiragen:
                        max_tokens=350, system=system)
         choice = parse_choice(result["text"], suggestions)
         log_event("training_example", self.name, system=system,
-                  messages=[{"role": "user", "content": user}], reply=result["text"])
+                  messages=[{"role": "user", "content": user}], reply=result["text"],
+                  decision_id=decision_id, task="choose")
         return choice
 
     def _answer_alone(self, question: str) -> str:

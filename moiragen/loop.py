@@ -28,6 +28,7 @@ import time
 import traceback
 
 from .body import Body
+from .llm import BrainError
 from .memory_log import log_event
 from .mind import nanite_think
 from .mother import Moiragen
@@ -308,13 +309,25 @@ class Mind:
     def run(self) -> None:
         """The endless loop (until stop()). Errors are logged, never fatal."""
         self.emit("awake", text="Moiragen is awake.")
+        failures = 0  # errors in a row
         while not self._stop.is_set():
             try:
                 self.step()
+                if failures:
+                    self.emit("awake", text="Moiragen's brain is working again.")
+                failures = 0
             except Exception as e:
-                log_event("error", "mind", text=repr(e))
-                self.emit("error", text=repr(e))
-                time.sleep(2)
+                failures += 1
+                if isinstance(e, BrainError):
+                    text = "I can't reach my brain (is the Ollama app running?). I'll keep trying."
+                else:
+                    text = f"Something went wrong: {e!r}"
+                # Report the first error, then only every 10th, so the log is not flooded.
+                if failures == 1 or failures % 10 == 0:
+                    log_event("error", "mind", text=repr(e), failures=failures)
+                    self.emit("error", text=text)
+                # Wait longer after each failure in a row (2s, 4s, 8s ... up to 60s).
+                self._stop.wait(min(60, 2 ** failures))
         self.emit("asleep", text="Moiragen's loop stopped.")
 
     def start(self) -> None:

@@ -163,6 +163,19 @@ def create_app(mind: Mind | None = None, start_mind: bool = True) -> FastAPI:
 
 
 if __name__ == "__main__":
+    import sys
     import uvicorn
-    print(f"Moiragen viewer: http://{HOST}:{PORT}")
+    from moiragen.llm import is_awake
+
+    import socket
+
+    sys.stdout.reconfigure(encoding="utf-8")
+    with socket.socket() as s:
+        if s.connect_ex((HOST, PORT)) == 0:
+            sys.exit(f"Port {PORT} is already in use. Is Moiragen already running? "
+                     f"Open http://{HOST}:{PORT} or close the other window first.")
+    if not is_awake():
+        print("WARNING: Ollama is not answering. Start the Ollama app, or Moiragen "
+              "cannot think (he will keep trying).")
+    print(f"Moiragen viewer: http://{HOST}:{PORT}   (Ctrl+C to stop)")
     uvicorn.run(create_app(), host=HOST, port=PORT, log_level="warning")

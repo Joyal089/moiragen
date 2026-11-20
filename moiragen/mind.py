@@ -86,7 +86,8 @@ def energy_cost(reply: str) -> float:
     return THINK_BASE_COST + THINK_COST_PER_50_WORDS * (words / 50)
 
 
-def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = True) -> dict:
+def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = True,
+                 decision_id: str | None = None) -> dict:
     """Ask a nanite something and get its reply.
 
     message:  what is said to the nanite
@@ -130,7 +131,8 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
 
     # 4. Log the full exchange in a fine-tuning friendly shape.
     log_event("training_example", n.name, system=system, messages=messages, reply=reply,
-              temperature=n.temperament["temperature"])
+              temperature=n.temperament["temperature"],
+              **({"decision_id": decision_id, "task": "suggest"} if decision_id else {}))
 
     if save:
         n.save()

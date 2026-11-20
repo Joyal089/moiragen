@@ -2,6 +2,8 @@
 
 Each step is small, has its own test, and must pass before the next starts.
 
+**Status: all 10 steps built and tested** (tags `v0.1` to `v0.9`, then `v1.0`). Each step's test is `tests/stepN_check.py`; run them all with `tests/run_all.py`.
+
 | # | Step | What gets built | How we test it |
 |---|------|-----------------|----------------|
 | 1 | **Foundation** | `config.py` (reads `.env`), `llm.py` (talks to Ollama, one-at-a-time lock), `memory_log.py` (append-only JSONL log in `./memory`) | Ask gemma3:4b a question, see the reply, see it logged |
