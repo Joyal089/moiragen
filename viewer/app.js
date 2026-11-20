@@ -259,7 +259,8 @@ function showSuggestion(e) {
   const card = [...$("d-suggestions").children].find((c) => c.dataset.nanite === e.nanite);
   if (!card) return;
   card.classList.remove("waiting");
-  card.querySelector(".text").textContent = e.rested ? "(too tired, resting)" : e.text;
+  card.querySelector(".text").textContent =
+    e.rested ? "(too tired, resting)" : e.quiet ? "(had nothing new to add)" : e.text;
 }
 
 function showDecision(d) {
@@ -415,7 +416,13 @@ function handleEvent(e) {
       updateWorld(e);
       updateBody(e.body);
       updateSpotlight(e.spotlight);
+      setPresence(e.active);
       if (chatTarget) renderChatHeaderOnly();
+      break;
+
+    case "presence":
+      setPresence(e.active);
+      feed("life", e.text, e.time);
       break;
 
     case "body":
@@ -439,7 +446,7 @@ function handleEvent(e) {
     case "suggestion":
       setThinking(e.nanite, false);
       showSuggestion(e);
-      if (!e.rested) { bubble(e.nanite, e.text, "suggest"); pulse(e.nanite, "Moiragen", "ask"); }
+      if (!e.rested && !e.quiet) { bubble(e.nanite, e.text, "suggest"); pulse(e.nanite, "Moiragen", "ask"); }
       break;
 
     case "decision":
@@ -504,6 +511,29 @@ function renderChatHeaderOnly() {
   const scroll = log.scrollTop;
   renderChat();
   log.scrollTop = scroll;
+}
+
+// ---------------------------------------------------------------------------
+// "I'm here": while you move the mouse or type, tell Moiragen (at most once a
+// minute). After 10 minutes without any sign of you the nanites rest, so
+// nothing piles up while you are away; the next ping wakes them.
+// ---------------------------------------------------------------------------
+let lastPing = 0;
+function imHere() {
+  if (document.hidden) return;
+  const now = Date.now();
+  if (now - lastPing < 60000) return;
+  lastPing = now;
+  fetch("/api/active", { method: "POST" }).catch(() => {});
+}
+for (const kind of ["pointermove", "pointerdown", "keydown", "wheel", "touchstart"]) {
+  document.addEventListener(kind, imHere, { passive: true });
+}
+document.addEventListener("visibilitychange", imHere);
+
+// Show or hide the "resting while you're away" note.
+function setPresence(active) {
+  $("presence").hidden = active !== false;
 }
 
 // ---------------------------------------------------------------------------

@@ -12,6 +12,10 @@ Labels you can filter on later (for the nightly fine-tuning):
     chosen    - for a nanite's suggestion: did Moiragen pick it?
     feedback  - "right" / "wrong" if you marked that decision, else null
 
+Replies that copy a line said shortly before them (the echo loop, see
+echo.py) are left out: the echo check is replayed over the whole log, so
+copies from before the live guard existed never become training data either.
+
 Exports go to memory/exports/ so they stay private (never pushed to Git).
 """
 
@@ -20,6 +24,7 @@ from datetime import datetime
 import json
 
 from .config import MEMORY_DIR
+from .echo import NANITES, EchoGuard
 from .memory_log import read_events
 
 EXPORT_DIR = MEMORY_DIR / "exports"
@@ -39,15 +44,27 @@ def _decision_labels(events: list[dict]) -> tuple[dict, dict]:
     return chosen, feedback
 
 
-def build_examples(since: str | None = None, skip_wrong: bool = False) -> list[dict]:
-    """All training examples (optionally only those on/after `since`, YYYY-MM-DD)."""
+def build_examples(since: str | None = None, skip_wrong: bool = False,
+                   stats: dict | None = None) -> list[dict]:
+    """All training examples (optionally only those on/after `since`, YYYY-MM-DD).
+
+    stats: pass a dict to learn how many copied replies were left out.
+    """
     events = read_events(last=10**9)
     chosen, feedback = _decision_labels(events)
-    out = []
+    replay = EchoGuard(seed_from_log=False)   # the echo check, replayed from the start
+    out, repeats = [], 0
     for e in events:
         if e["kind"] != "training_example":
             continue
+        group = "Moiragen" if e["who"] == "Moiragen" else NANITES
+        copy = replay.check(e["reply"], group, e.get("decision_id")).too_similar
+        if not copy:
+            replay.add(e["who"], e["reply"], group, e.get("decision_id"))
         if since and e["time"][:10] < since:
+            continue
+        if copy:
+            repeats += 1
             continue
         did = e.get("decision_id")
         fb = feedback.get(did)
@@ -60,6 +77,8 @@ def build_examples(since: str | None = None, skip_wrong: bool = False) -> list[d
         if e.get("task") == "suggest" and did in chosen:
             record["chosen"] = chosen[did] == e["who"]
         out.append(record)
+    if stats is not None:
+        stats["left_out_repeats"] = repeats
     return out
 
 
@@ -88,13 +107,15 @@ def life_summary(since: str | None = None) -> dict:
 def export_training(since: str | None = None, skip_wrong: bool = False) -> tuple[str, dict]:
     """Write the examples to memory/exports/ and return (path, summary)."""
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    examples = build_examples(since, skip_wrong)
+    stats = {}
+    examples = build_examples(since, skip_wrong, stats)
     path = EXPORT_DIR / f"training-{datetime.now().strftime('%Y%m%d-%H%M%S')}.jsonl"
     with open(path, "w", encoding="utf-8") as f:
         for ex in examples:
             f.write(json.dumps(ex, ensure_ascii=False) + "\n")
     summary = {
         "examples": len(examples),
+        "left_out_repeats": stats["left_out_repeats"],
         "by_mind": dict(Counter(ex["who"] for ex in examples)),
         "by_task": dict(Counter(ex["task"] for ex in examples)),
         "marked_right": sum(ex["feedback"] == "right" for ex in examples),

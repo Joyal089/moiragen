@@ -7,6 +7,8 @@ Run from the project folder:
 Type a question and press Enter. Commands:
     /story    write today's story now
     /quit     stop
+    (just Enter)  "I'm here": after 10 minutes without any typing the nanites
+                  rest, so nothing piles up while you are away
 
 This uses Moiragen's REAL memory.
 """
@@ -40,6 +42,8 @@ def show(e: dict) -> None:
         print(f"[{at}] STORY of {e['day']}:\n{e['text']}")
     elif t in ("awake", "asleep", "error"):
         print(f"[{at}] {e['text']}")
+    elif t == "presence":
+        print(f"[{at}] {e['text']}" + ("" if e["active"] else "  (press Enter to wake them)"))
     # body readings arrive every tick; too noisy to print
 
 
@@ -54,6 +58,7 @@ while True:
     except (EOFError, KeyboardInterrupt):
         break
     if not q:
+        mind.touch()   # "I'm here"
         continue
     if q == "/quit":
         break

@@ -2,7 +2,7 @@
 
 Each step is small, has its own test, and must pass before the next starts.
 
-**Status: all 10 steps built and tested** (tags `v0.1` to `v0.9`, then `v1.0`). Each step's test is `tests/stepN_check.py`; run them all with `tests/run_all.py`.
+**Status: all 10 steps built and tested** (tags `v0.1` to `v0.9`, then `v1.0`), plus step 11, the echo-loop fix (`v1.1`). Each step's test is `tests/stepN_check.py`; run them all with `tests/run_all.py`.
 
 | # | Step | What gets built | How we test it |
 |---|------|-----------------|----------------|
@@ -16,6 +16,7 @@ Each step is small, has its own test, and must pass before the next starts.
 | 8 | **Backend server** | FastAPI + WebSocket that runs the mind and streams every event | Open the event stream, see live events |
 | 9 | **Viewer app** | Local web page: Moiragen centre, 3 nanites around him, bars, live speech bubbles/lines, suggestions + final choice, click to chat | Use it in the browser |
 | 10 | **Polish** | Fine-tuning-ready log export, error handling, README | Full run-through |
+| 11 | **Echo-loop fix** | Verified memory backups; one-off clean-up of repeated lines (first copy kept); echo guard on every saved line and the fine-tuning log; fresh topics for every talk; warmer temperature + repeat penalty; social rounds limited and paused while nobody uses the app | Copies rejected and retried, nothing copied saved or logged, topics rotate, no brain use while resting |
 
 Later (not now): nightly fine-tuning, nanites choosing names (the hooks will be there). No Telegram.
 

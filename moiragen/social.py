@@ -4,6 +4,10 @@ Who does what is decided by plain Python (no LLM), using each nanite's
 temperament, feelings and friendships. The LLM is only used for the
 WORDS they say. That keeps behaviour understandable and cheap.
 
+Every talk and every comfort starts from a fresh, specific prompt (see
+topics.py), and every line passes the echo guard (see echo.py), so the
+nanites do not slide back into repeating each other.
+
 Every action returns small "event" dicts like
     {"type": "talk", "from": "Nanite One", "to": "Nanite Two", "text": "..."}
 which the viewer app will later draw as speech bubbles and lines.
@@ -11,9 +15,11 @@ which the viewer app will later draw as speech bubbles and lines.
 
 import random
 
+from .echo import split_sentences
 from .memory_log import log_event
 from .mind import nanite_think, TIRED
 from .nanite import Nanite
+from .topics import Topic, picker
 
 # --- Tunable numbers ---
 HURT_LEVEL = 60          # below this health, friends always come to help
@@ -79,18 +85,26 @@ def best_helper(patient: Nanite, nanites: dict[str, Nanite]) -> Nanite | None:
 # Actions (these use the LLM for words)
 # ---------------------------------------------------------------------------
 
-def talk(speaker: Nanite, listener: Nanite) -> list[dict]:
-    """speaker starts a short conversation with listener; listener replies."""
+def _silent(out: dict) -> bool:
+    """True if a nanite said nothing usable: it rested, or could only repeat."""
+    return out["rested"] or out["repeated"]
+
+
+def talk(speaker: Nanite, listener: Nanite, topic: Topic | None = None, rng=random) -> list[dict]:
+    """speaker starts a short conversation with listener about a fresh topic; listener replies."""
+    topic = topic or picker.for_talk(speaker, listener, rng=rng)
     opening = nanite_think(
-        speaker,
-        f"You chose to talk to your friend {listener.name}. Say something to them, "
-        f"in one or two sentences. It can be anything you want to share or ask.",
-        from_who="self", save=False)
-    if opening["rested"]:
-        return []
+        speaker, f"You chose to talk to your friend {listener.name}. {topic.prompt}",
+        from_who="self", save=False, avoid=topic.avoid,
+        remember=False)                     # remembered below, together with the reply
+    if _silent(opening):
+        return []                           # nothing new to say: no talk this time
     reply = nanite_think(listener, opening["reply"], from_who=speaker.name, save=False)
-    events = [_event("talk", **{"from": speaker.name, "to": listener.name, "text": opening["reply"]})]
-    if not reply["rested"]:
+    events = [_event("talk", **{"from": speaker.name, "to": listener.name, "text": opening["reply"],
+                                "topic": topic.about})]
+    if _silent(reply):
+        speaker.remember("chat", f"I told {listener.name}: {opening['reply']} | They did not answer.")
+    else:
         events.append(_event("talk", **{"from": listener.name, "to": speaker.name, "text": reply["reply"]}))
         speaker.remember("chat", f"I told {listener.name}: {opening['reply']} | They replied: {reply['reply']}")
     speaker.change_friendship(listener.id, FRIENDSHIP_TALK)
@@ -104,27 +118,29 @@ def help_friend(helper: Nanite, patient: Nanite) -> list[dict]:
         helper,
         f"Your friend {patient.name} is hurt (health {patient.health:.0f}/100). You are "
         f"giving some of your energy to help them recover. Say a short kind sentence to them.",
-        from_who="self", save=False)
+        from_who="self", save=False, remember=False)
+    said = "" if _silent(words) else words["reply"]   # the help counts even without new words
     helper.spend_energy(HELP_COST, f"helped {patient.name}")
     patient.heal(HELP_HEAL, helper=helper)           # patient feels grateful, likes helper more
     patient.feel("sad", -0.2)
     helper.feel("happy", 0.15)
     helper.change_friendship(patient.id, FRIENDSHIP_HELP)
-    helper.remember("helped", f"I helped {patient.name} recover. I said: {words['reply']}")
-    return [_event("help", **{"from": helper.name, "to": patient.name, "text": words["reply"],
+    helper.remember("helped", f"I helped {patient.name} recover." + (f" I said: {said}" if said else ""))
+    return [_event("help", **{"from": helper.name, "to": patient.name,
+                              "text": said or f"(gives {patient.name} some energy)",
                               "health": patient.health})]
 
 
-def support_friend(supporter: Nanite, friend: Nanite) -> list[dict]:
+def support_friend(supporter: Nanite, friend: Nanite, rng=random) -> list[dict]:
     """supporter notices a friend feeling left out or disappointed and comforts them."""
     feeling = "left out" if friend.emotions.get("left_out", 0) >= friend.emotions.get("disappointed", 0) \
         else "disappointed"
     words = nanite_think(
         supporter,
         f"You notice your friend {friend.name} seems {feeling}, maybe because Moiragen did "
-        f"not choose their idea. Say one or two supportive sentences to them.",
-        from_who="self", save=False)
-    if words["rested"]:
+        f"not choose their idea. {picker.for_support(rng)} Speak to them directly.",
+        from_who="self", save=False, remember=False)
+    if _silent(words):
         return []
     thanks = nanite_think(friend, words["reply"], from_who=supporter.name, save=False)
     friend.feel("disappointed", -0.15)
@@ -132,10 +148,20 @@ def support_friend(supporter: Nanite, friend: Nanite) -> list[dict]:
     friend.feel("grateful", 0.3)
     friend.change_friendship(supporter.id, FRIENDSHIP_SUPPORT)
     supporter.change_friendship(friend.id, FRIENDSHIP_SUPPORT / 2)
+    answer = "They did not answer." if _silent(thanks) else f"They replied: {thanks['reply']}"
+    supporter.remember("chat", f"I comforted {friend.name}, who seemed {feeling}: {words['reply']} | {answer}")
     events = [_event("support", **{"from": supporter.name, "to": friend.name, "text": words["reply"]})]
-    if not thanks["rested"]:
+    if not _silent(thanks):
         events.append(_event("talk", **{"from": friend.name, "to": supporter.name, "text": thanks["reply"]}))
     return events
+
+
+def lesson_from(reply: str) -> str:
+    """The "I learned..." sentence in a reply (or its first line if there is none)."""
+    for s in split_sentences(reply):
+        if s.lstrip("*\"' ").lower().startswith("i learned"):
+            return s.strip()
+    return reply.strip().split("\n")[0]
 
 
 def ask_why_not_chosen(n: Nanite, decision: dict, moiragen) -> list[dict]:
@@ -152,16 +178,19 @@ def ask_why_not_chosen(n: Nanite, decision: dict, moiragen) -> list[dict]:
         f"You asked Moiragen: {question}\nMoiragen explained: {explanation}\n"
         f"In ONE short sentence starting with 'I learned', say what you will do "
         f"differently next time.",
-        from_who="self", save=False)
-    lesson = reflection["reply"].strip().split("\n")[0]
-    n.learn(lesson, source=f"decision {decision['id']}")
+        from_who="self", save=False,
+        note=f"I asked Moiragen: {question} He explained: {explanation}")
     n.feel("disappointed", -0.1)       # understanding why softens the sting
     n.feel("curious", 0.1)
-    return [
+    events = [
         _event("ask_why", **{"from": n.name, "to": "Moiragen", "text": question}),
         _event("explain", **{"from": "Moiragen", "to": n.name, "text": explanation}),
-        _event("lesson", **{"from": n.name, "to": n.name, "text": lesson}),
     ]
+    if not _silent(reflection):        # a lesson only if it said something new
+        lesson = lesson_from(reflection["reply"])
+        n.learn(lesson, source=f"decision {decision['id']}")
+        events.append(_event("lesson", **{"from": n.name, "to": n.name, "text": lesson}))
+    return events
 
 
 # ---------------------------------------------------------------------------
@@ -191,14 +220,14 @@ def after_decision(decision: dict, nanites: dict[str, Nanite], moiragen, rng=ran
         if supporter:
             chance = supporter.temperament["warmth"] + supporter.friendships.get(friend.id, 50) / 200
             if rng.random() < chance:
-                events += support_friend(supporter, friend)
+                events += support_friend(supporter, friend, rng)
 
     for n in nanites.values():
         n.save()
     return events
 
 
-def social_round(nanites: dict[str, Nanite], rng=random) -> list[dict]:
+def social_round(nanites: dict[str, Nanite], rng=random, stage_history=()) -> list[dict]:
     """One moment of social life, to be run again and again by the thinking loop.
 
     Each nanite, in random order, does ONE thing:
@@ -206,6 +235,8 @@ def social_round(nanites: dict[str, Nanite], rng=random) -> list[dict]:
       2. If it is tired -> rest.
       3. If a friend is feeling down -> maybe support them (warmth decides).
       4. Otherwise -> maybe start a talk (curiosity + happiness decide), or rest.
+         Each talk gets a fresh topic: a set-shape question, an older memory,
+         or something from stage_history (what recently had everyone's attention).
     Afterwards feelings fade a little and unused friendships drift to neutral.
     """
     events = []
@@ -229,12 +260,13 @@ def social_round(nanites: dict[str, Nanite], rng=random) -> list[dict]:
             busy.add(n.id)
         elif down and rng.random() < n.temperament["warmth"]:
             friend = max(down, key=lambda o: n.friendships.get(o.id, 50))
-            events += support_friend(n, friend)
+            events += support_friend(n, friend, rng)
             busy |= {n.id, friend.id}
         elif rng.random() < n.temperament["curiosity"] + n.emotions.get("happy", 0) * 0.3:
             listener = choose_who_to_talk_to(n, nanites, rng)
             if listener.id not in busy:
-                events += talk(n, listener)
+                topic = picker.for_talk(n, listener, stage_history, rng)
+                events += talk(n, listener, topic, rng)
                 busy |= {n.id, listener.id}
         else:
             n.rest(10)

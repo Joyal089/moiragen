@@ -10,7 +10,7 @@ import time
 
 import requests
 
-from .config import OLLAMA_HOST, OLLAMA_MODEL
+from .config import OLLAMA_HOST, OLLAMA_MODEL, OLLAMA_REPEAT_LAST_N, OLLAMA_REPEAT_PENALTY
 
 # Only one mind may use the model at a time.
 _brain_lock = threading.Lock()
@@ -43,6 +43,7 @@ def think(
     temperature: float = 0.7,
     max_tokens: int = 300,
     system: str | None = None,
+    repeat_penalty: float | None = None,
 ) -> dict:
     """Send a conversation to the model and return its reply.
 
@@ -52,6 +53,9 @@ def think(
                  Each nanite gets its own, which is part of its temperament.
     max_tokens: rough cap on reply length.
     system: optional instructions placed before the conversation.
+    repeat_penalty: how strongly to avoid words already in the conversation
+                    (None = the setting from .env, 1.0 = off). Moiragen's JSON
+                    choice uses 1.0, because it must repeat names exactly.
 
     Note: Ollama has a "format": "json" option, but with gemma3:4b it can
     get stuck repeating tokens, so we ask for JSON in the prompt instead
@@ -67,7 +71,12 @@ def think(
         "model": OLLAMA_MODEL,
         "messages": messages,
         "stream": False,  # wait for the whole reply (simpler for now)
-        "options": {"temperature": temperature, "num_predict": max_tokens},
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+            "repeat_penalty": OLLAMA_REPEAT_PENALTY if repeat_penalty is None else repeat_penalty,
+            "repeat_last_n": OLLAMA_REPEAT_LAST_N,
+        },
         "keep_alive": "30m",  # keep the model loaded in VRAM between turns
     }
 

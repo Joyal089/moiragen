@@ -9,6 +9,8 @@ different is:
 As memories pile up, the nanites grow apart. That is their personality.
 """
 
+from .config import NANITE_TEMPERATURE_BOOST
+from .echo import NANITES, guard, record_training_example
 from .llm import think
 from .memory_log import log_event
 from .nanite import Nanite
@@ -22,6 +24,12 @@ TIRED = 30                 # below this it keeps answers short
 # How many recent memories to remind the nanite of each time.
 # Small, because gemma3:4b has limited attention and we want speed.
 RECENT_MEMORIES = 8
+
+# --- The echo guard (see echo.py) ---
+ECHO_RETRIES = 2           # how many times a nanite is asked to say something new
+RETRY_WARMER = 0.1         # each new try is a little more adventurous (temperature)
+NOTHING_NEW = ("I notice I'm only repeating what was already said, "
+               "so I'll stay quiet until I have something new.")
 
 
 def describe_state(n: Nanite) -> str:
@@ -88,16 +96,57 @@ def energy_cost(reply: str) -> float:
     return THINK_BASE_COST + THINK_COST_PER_50_WORDS * (words / 50)
 
 
+def speak_freshly(n: Nanite, system: str, messages: list[dict], temperature: float,
+                  max_tokens: int, context=None, avoid: list[str] | None = None) -> tuple[str | None, float]:
+    """Think, and make sure the words are new (the echo guard, see echo.py).
+
+    1. Think, then check the reply against every nanite's recent lines.
+    2. Too similar? Show the nanite what it said, ask it to say something new,
+       and think again a little more adventurously (up to ECHO_RETRIES times).
+    3. Still repeating? Keep only its new sentences. If nothing new is left,
+       return None: the nanite has nothing new to say.
+
+    context: e.g. a decision id (answers to the same question are not echoes)
+    avoid:   texts the reply must not copy either (e.g. a memory it was given)
+    Returns (the reply or None, seconds spent thinking).
+    """
+    convo, seconds = list(messages), 0.0
+    for attempt in range(ECHO_RETRIES + 1):
+        result = think(convo, temperature=round(temperature + attempt * RETRY_WARMER, 2),
+                       max_tokens=max_tokens, system=system)
+        seconds += result["seconds"]
+        reply = result["text"]
+        check = guard.check(reply, NANITES, context, avoid)
+        if not check.too_similar:
+            return reply, seconds
+        # Rejected: logged (never saved as a memory or as training data).
+        log_event("echo_rejected", n.name, text=reply[:300], similar_to=check.similar_to[:200],
+                  score=check.score, attempt=attempt + 1)
+        convo = messages + [{"role": "assistant", "content": reply},
+                            {"role": "user", "content": check.nudge()}]
+    rest = guard.strip_repeats(reply, NANITES, context, avoid)
+    if rest and not guard.check(rest, NANITES, context, avoid).too_similar:
+        return rest, seconds
+    return None, seconds
+
+
 def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = True,
-                 decision_id: str | None = None) -> dict:
+                 decision_id: str | None = None, avoid: list[str] | None = None,
+                 remember: bool = True, note: str | None = None) -> dict:
     """Ask a nanite something and get its reply.
 
     message:  what is said to the nanite
     from_who: who is speaking ("user", "Moiragen", "Nanite Two", ...)
               or "self" for a private moment where nobody is speaking and
               the message describes the situation (e.g. "You chose to talk to...")
+    avoid:    texts the reply must not copy (e.g. the memory it was asked about)
+    remember: False when the caller records the moment itself (e.g. a talk)
+    note:     for a private moment: what to remember instead of the whole
+              instruction, e.g. "I asked Moiragen why..."
 
-    Returns {"nanite", "reply", "energy_spent", "seconds", "rested"}.
+    Returns {"nanite", "reply", "energy_spent", "seconds", "rested", "repeated"}.
+    "repeated" is True when the nanite could only repeat what was already
+    said: then nothing it said is saved, and the reply says so.
     """
     # 1. Too exhausted to think? It rests instead of answering.
     if n.energy < TOO_TIRED:
@@ -106,9 +155,11 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
         n.remember("rest", "I was too tired to think, so I rested.", from_who=from_who)
         if save:
             n.save()
-        return {"nanite": n.name, "reply": reply, "energy_spent": 0, "seconds": 0, "rested": True}
+        return {"nanite": n.name, "reply": reply, "energy_spent": 0, "seconds": 0,
+                "rested": True, "repeated": False}
 
-    # 2. Build the prompt and think, using its own temperature.
+    # 2. Build the prompt and think, a little warmer than its own temperature,
+    #    making sure the words are new.
     system = build_system_prompt(n)
     if from_who == "self":
         content = (f"(A private moment. Nobody is speaking to you.) {message}\n"
@@ -119,24 +170,33 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
         content = f"{speaker} says: {message}"
     messages = [{"role": "user", "content": content}]
     max_tokens = 80 if n.energy < TIRED else 220
-    result = think(messages, temperature=n.temperament["temperature"],
-                   max_tokens=max_tokens, system=system)
-    reply = result["text"]
+    temperature = round(n.temperament["temperature"] + NANITE_TEMPERATURE_BOOST, 2)
+    reply, seconds = speak_freshly(n, system, messages, temperature, max_tokens, decision_id, avoid)
+    repeated = reply is None
 
-    # 3. Pay the energy cost and remember the conversation.
-    cost = round(energy_cost(reply), 2)
+    # 3. Thinking costs energy, even when nothing new came out.
+    cost = round(energy_cost(reply or ""), 2)
     n.spend_energy(cost, "thinking")
-    if from_who == "self":
-        n.remember("thought", f"{message} | I said: {reply}")
-    else:
-        n.remember("chat", f"{from_who} said: {message} | I replied: {reply}", from_who=from_who)
 
-    # 4. Log the full exchange in a fine-tuning friendly shape.
-    log_event("training_example", n.name, system=system, messages=messages, reply=reply,
-              temperature=n.temperament["temperature"],
-              **({"decision_id": decision_id, "task": "suggest"} if decision_id else {}))
+    # 4. Remember it and log it for fine-tuning, ONLY if it passed the echo check.
+    if repeated:
+        reply = NOTHING_NEW
+        log_event("echo_quiet", n.name, about=message[:200])
+        if remember and from_who != "self":   # what was said to it is still real
+            n.remember("chat", f"{from_who} said: {message} | I had nothing new to say.",
+                       from_who=from_who)
+    else:
+        if remember:
+            if from_who == "self":
+                n.remember("thought", f"{note or message} | I said: {reply}")
+            else:
+                n.remember("chat", f"{from_who} said: {message} | I replied: {reply}",
+                           from_who=from_who)
+        record_training_example(n.name, system, messages, reply, NANITES, decision_id,
+                                temperature=temperature,
+                                **({"decision_id": decision_id, "task": "suggest"} if decision_id else {}))
 
     if save:
         n.save()
     return {"nanite": n.name, "reply": reply, "energy_spent": cost,
-            "seconds": result["seconds"], "rested": False}
+            "seconds": seconds, "rested": False, "repeated": repeated}

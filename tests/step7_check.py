@@ -113,7 +113,10 @@ assert any(m["kind"] == "noticed" for n in mind.nanites.values() for m in n.memo
 print("[ok] Important spotlight thoughts are remembered by the nanites (broadcast)")
 
 # A social tick (every SOCIAL_EVERY ticks).
-mind.tick(); mind.tick()
+from moiragen.loop import SOCIAL_EVERY
+mind.touch()                          # you are here, so the nanites are awake
+mind.tick_count = SOCIAL_EVERY - 1    # the next tick is a social one
+mind.tick()
 social = [e for e in events if e["type"] == "social"]
 print(f"  Social events so far: {[(e['from'], e['action'], e['to']) for e in social]}")
 assert all("action" in e for e in social)

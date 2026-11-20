@@ -18,6 +18,9 @@ Endpoints:
     POST /api/chat       {"nanite_id": "nanite_one", "text"}  talk directly to one nanite
     POST /api/feedback   {"decision_id", "correct", "note"}   mark a decision right or wrong
     POST /api/story      write today's story now
+    POST /api/active     "I'm here": the viewer sends this when you move the mouse or type
+                         (at most once a minute). Without any sign of you for 10 minutes,
+                         the nanites rest (see moiragen/loop.py).
     WS   /ws             live stream of every event (JSON)
 """
 
@@ -141,11 +144,17 @@ def create_app(mind: Mind | None = None, start_mind: bool = True) -> FastAPI:
         text = await run_job(app.state.mind.request_story)
         return {"story": text}
 
+    @app.post("/api/active")
+    def active():
+        app.state.mind.touch()
+        return {"active": True}
+
     # ---------- live events ----------
 
     @app.websocket("/ws")
     async def ws(websocket: WebSocket):
         await websocket.accept()
+        app.state.mind.touch()          # opening the viewer counts as using the app
         q: asyncio.Queue = asyncio.Queue()
         broadcaster.clients.add(q)
         try:

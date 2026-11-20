@@ -22,6 +22,7 @@ import re
 import uuid
 
 from .config import MEMORY_DIR
+from .echo import record_training_example
 from .llm import think
 from .memory_log import log_event, read_events
 from .mind import nanite_think
@@ -142,6 +143,9 @@ class Moiragen:
             if out["rested"]:
                 notify("suggestion", nanite_id=n.id, nanite=n.name, text=out["reply"], rested=True)
                 continue  # too tired, it sat this one out
+            if out["repeated"]:
+                notify("suggestion", nanite_id=n.id, nanite=n.name, text=out["reply"], quiet=True)
+                continue  # it could only repeat what was already said, so it sat this one out
             s = {"nanite_id": n.id, "nanite": n.name, "text": out["reply"]}
             suggestions.append(s)
             notify("suggestion", question=question, **s)
@@ -194,12 +198,14 @@ class Moiragen:
         )
         user = (f"The human asked: \"{question}\"\n\n{listed}\n\n"
                 f"Valid names: {', '.join(names)}.")
+        # repeat_penalty 1.0: the JSON must repeat the nanite's name exactly.
         result = think([{"role": "user", "content": user}], temperature=DECIDE_TEMPERATURE,
-                       max_tokens=350, system=system)
+                       max_tokens=350, system=system, repeat_penalty=1.0)
         choice = parse_choice(result["text"], suggestions)
-        log_event("training_example", self.name, system=system,
-                  messages=[{"role": "user", "content": user}], reply=result["text"],
-                  decision_id=decision_id, task="choose")
+        # Into the fine-tuning log only if it passes the echo check (see echo.py).
+        record_training_example(self.name, system, [{"role": "user", "content": user}], result["text"],
+                                group="Moiragen", context=decision_id,
+                                decision_id=decision_id, task="choose")
         return choice
 
     def _answer_alone(self, question: str) -> str:
@@ -283,8 +289,10 @@ class Moiragen:
             self.self_knowledge = self.self_knowledge[-30:]
         decision["reflected"] = True
         self.remember("reflection", reflection, decision_id=decision["id"], about_me=about)
-        log_event("training_example", self.name, system=system,
-                  messages=[{"role": "user", "content": user}], reply=text)
+        # Into the fine-tuning log only if it passes the echo check. (Restating
+        # his reason for this same decision is fine, hence the context.)
+        record_training_example(self.name, system, [{"role": "user", "content": user}], text,
+                                group="Moiragen", context=decision["id"])
         self.save()
         return {"reflection": reflection, "about_me": about, "decision_id": decision["id"]}
 

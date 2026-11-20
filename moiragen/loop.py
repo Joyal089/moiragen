@@ -7,7 +7,8 @@ things never change a nanite at the same moment.
 Each tick (every ~20 seconds when idle):
   1. SENSE    body cells read the laptop; anything unusual is posted to the stage
   2. PREDICT  readings are compared with expectations; surprises are posted
-  3. LIVE     every few ticks the nanites have a social moment (talk, help, rest)
+  3. LIVE     every few ticks the nanites have a social moment (talk, help, rest),
+              at most SOCIAL_PER_HOUR of them in any hour
   4. REFLECT  if a decision has not been reflected on yet, Moiragen reflects
   5. ATTEND   thoughts compete on the stage; the winner is broadcast to all,
               and if it matters, Moiragen has a short inner thought about it
@@ -16,10 +17,17 @@ Each tick (every ~20 seconds when idle):
 When you ask something, it jumps the queue: the loop handles your question
 right away, and the decision goes straight onto the stage.
 
+Resting while you are away: if you have not used the app for IDLE_AFTER
+seconds (no question, chat, or mouse/keyboard in the viewer), surprises,
+social moments, reflection, attention and inner thoughts pause, and only the
+body keeps watch (plus the once-a-day story). Nothing piles up overnight.
+The moment you are back, everything carries on.
+
 Everything that happens is sent to `listeners` as event dicts; the viewer
 app (step 8/9) will listen to these.
 """
 
+from collections import deque
 from datetime import date, datetime, timedelta
 import queue
 import random
@@ -40,7 +48,9 @@ from .story import story_path, write_daily_story
 
 # --- Tunable numbers ---
 TICK_SECONDS = 20          # pause between idle ticks
-SOCIAL_EVERY = 3           # nanites have a social moment every N ticks
+SOCIAL_EVERY = 6           # nanites have a social moment every N ticks (about every 2 minutes)
+SOCIAL_PER_HOUR = 12       # ...but never more than this many in any hour
+IDLE_AFTER = 10 * 60       # seconds without any sign of you before everyone rests
 INNER_THOUGHT_GAP = 60     # at least this many seconds between inner thoughts
 INNER_THOUGHT_MIN = 0.5    # only things at least this important get an inner thought
 BROADCAST_MIN = 0.6        # nanites remember stage winners at least this important
@@ -52,7 +62,7 @@ SOCIAL_IMPORTANCE = {"help": 0.65, "ask_why": 0.55, "explain": 0.5, "lesson": 0.
 
 
 class Mind:
-    def __init__(self, tick_seconds: float = TICK_SECONDS, rng=None):
+    def __init__(self, tick_seconds: float = TICK_SECONDS, rng=None, idle_after: float = IDLE_AFTER):
         self.nanites = load_all()
         self.moiragen = Moiragen.load()
         self.body = Body(self.nanites)
@@ -64,6 +74,10 @@ class Mind:
         self.inbox = queue.Queue()
         self.tick_count = 0
         self.last_inner = 0.0
+        self.idle_after = idle_after
+        self.last_activity = time.time()   # starting Moiragen counts as using him
+        self.active = True                 # False while everyone rests (you are away)
+        self.social_times = deque()        # when recent social rounds ran (for the hourly limit)
         self._stop = threading.Event()
         self._thread = None
         self.last_body = self.body.sense()
@@ -100,6 +114,7 @@ class Mind:
             "spotlight": self.stage.spotlight.as_dict() if self.stage.spotlight else None,
             "stage_history": [t.as_dict() for t in self.stage.history[-10:]],
             "decisions": recent,
+            "active": self.active,
         }
 
     def _vitals(self) -> None:
@@ -129,6 +144,41 @@ class Mind:
         self.emit("social", action=e["type"], **data)
         self.stage.post(e["from"], e["type"], e.get("text", ""), SOCIAL_IMPORTANCE.get(e["type"], 0.3))
 
+    # ---------- are you here? ----------
+
+    def touch(self) -> None:
+        """You did something (asked, chatted, used the viewer). Safe from any thread."""
+        self.last_activity = time.time()
+        if not self.active:
+            # Everyone is resting: wake the loop so it notices you right away.
+            self.inbox.put((lambda: None, (), queue.Queue(maxsize=1)))
+
+    def is_active(self) -> bool:
+        """Has someone used Moiragen in the last idle_after seconds?"""
+        return time.time() - self.last_activity < self.idle_after
+
+    def _check_presence(self) -> None:
+        """Pause social life when you are away; carry on when you are back."""
+        now = self.is_active()
+        if now == self.active:
+            return
+        self.active = now
+        if now:
+            text = "You're back, so the nanites carry on living."
+        else:
+            text = (f"Nobody has used the app for {self.idle_after / 60:.0f} minutes, so the "
+                    f"nanites rest until you're back. Only the body keeps watch.")
+        log_event("presence", "mind", active=now, text=text)
+        self.emit("presence", active=now, text=text)
+        self._vitals()
+
+    def _social_allowed(self) -> bool:
+        """At most SOCIAL_PER_HOUR social rounds in any hour."""
+        hour_ago = time.time() - 3600
+        while self.social_times and self.social_times[0] < hour_ago:
+            self.social_times.popleft()
+        return len(self.social_times) < SOCIAL_PER_HOUR
+
     # ---------- questions in ----------
 
     def call(self, fn, *args, timeout: float = 300):
@@ -136,7 +186,9 @@ class Mind:
 
         Other threads (the terminal, the web server) never touch the nanites
         directly; they hand jobs to the loop through this inbox instead.
+        Every job comes from you, so it also counts as you using the app.
         """
+        self.touch()
         reply = queue.Queue(maxsize=1)
         self.inbox.put((fn, args, reply))
         result = reply.get(timeout=timeout)
@@ -207,30 +259,38 @@ class Mind:
 
     def tick(self) -> None:
         self.tick_count += 1
+        active = self.active   # False = you are away, everyone rests (see _check_presence)
 
-        # 1. SENSE
+        # 1. SENSE (always: the body keeps watch over the laptop)
         s = self.body.sense()
         self.last_body = s
         self.moiragen.body_note = self.body.describe(s)
         self.emit("body", **s)
-        if s["state"] != "fine":
-            self.stage.post("body", s["state"], s["why"], 0.85 if s["state"] == "hot" else 0.6)
-        for name in s["energy"]["tired_nanites"]:
-            self.stage.post("body", "tired", f"{name} is tired.", 0.35)
-        for n in self.nanites.values():
-            if needs_help(n):
-                self.stage.post(n.name, "hurt", f"{n.name} is hurt (health {n.health:.0f}).", 0.75)
+        if active:
+            if s["state"] != "fine":
+                self.stage.post("body", s["state"], s["why"], 0.85 if s["state"] == "hot" else 0.6)
+            for name in s["energy"]["tired_nanites"]:
+                self.stage.post("body", "tired", f"{name} is tired.", 0.35)
+            for n in self.nanites.values():
+                if needs_help(n):
+                    self.stage.post(n.name, "hurt", f"{n.name} is hurt (health {n.health:.0f}).", 0.75)
 
-        # 2. PREDICT
-        for sur in self.predictor.check_body(s):
+        # 2. PREDICT (always learns what is normal; surprises only count while you are here)
+        surprises = self.predictor.check_body(s)
+        if not active:
+            self._maybe_write_story()   # the one thing that still happens: once a day
+            self._vitals()
+            return
+        for sur in surprises:
             text = f"{sur['what']} was {sur['got']}, I expected about {sur['expected']}."
             self.moiragen.remember("surprise", text, **sur)
             self.emit("surprise", text=text, **sur)
             self.stage.post("predictor", "surprise", text, sur["surprise"])
 
-        # 3. LIVE
-        if self.tick_count % SOCIAL_EVERY == 0:
-            for e in social_round(self.nanites, self.rng):
+        # 3. LIVE (every SOCIAL_EVERY ticks, at most SOCIAL_PER_HOUR an hour)
+        if self.tick_count % SOCIAL_EVERY == 0 and self._social_allowed():
+            self.social_times.append(time.time())
+            for e in social_round(self.nanites, self.rng, self.stage.history):
                 self._social(e)
 
         # 4. REFLECT (on the newest decision from the last day not yet reflected on)
@@ -295,6 +355,7 @@ class Mind:
 
     def step(self, wait: float | None = None) -> None:
         """Handle one question if one is waiting (up to `wait` seconds), else tick."""
+        self._check_presence()
         try:
             fn, args, reply = self.inbox.get(timeout=wait if wait is not None else self.tick_seconds)
         except queue.Empty:
