@@ -263,6 +263,23 @@ function showSuggestion(e) {
     e.rested ? "(too tired, resting)" : e.quiet ? "(had nothing new to add)" : e.text;
 }
 
+// Under each suggestion: Moiragen's short reason for that nanite, and what he valued.
+function showVerdict(card, v) {
+  card.querySelector(".why")?.remove();
+  if (!v) return;
+  const box = html("div", "why");
+  box.append(html("b", "", "Moiragen: "), document.createTextNode(v.why || ""));
+  const badges = [];
+  if (v.honest) badges.push(v.dont_know ? "honest: “I don't know”" : "honest");
+  if (v.good_question) badges.push("good question");
+  if (badges.length) {
+    const row = html("div");
+    badges.forEach((b) => row.append(html("span", "badge", `+ ${b}`)));
+    box.append(row);
+  }
+  card.append(box);
+}
+
 function showDecision(d) {
   if (!currentDecision && $("decision-body").hidden) startDecision(d.question);
   currentDecision = d.id;
@@ -270,30 +287,77 @@ function showDecision(d) {
   for (const card of $("d-suggestions").children) {
     card.classList.toggle("chosen", card.dataset.nanite === d.chosen);
     if (card.classList.contains("waiting")) card.querySelector(".text").textContent = "(sat this one out)";
+    showVerdict(card, (d.verdicts || {})[card.dataset.nanite]);
   }
   $("d-chosen").textContent = d.chosen || "nobody";
-  $("d-reason").textContent = d.reason;
+  $("d-reason").textContent = d.wait_and_see
+    ? `${d.reason} He will wait and see if it is right (${d.check}).` : d.reason;
   $("d-answer").textContent = d.answer;
+  const ch = d.changed_after;
+  $("d-changed").hidden = !ch;
+  if (ch) $("d-changed").textContent = `${ch.by} disagreed, and Moiragen changed his choice from ${ch.from}: ${ch.why}`;
   $("d-verdict").hidden = false;
   $("d-feedback").querySelectorAll("button").forEach((b) => (b.disabled = false));
+  Object.values(nodes).forEach((n) => n.link?.classList.remove("chosen"));
   const id = idOf(d.chosen);
   if (id && nodes[id]?.link) nodes[id].link.classList.add("chosen");
 }
 
-$("d-feedback").addEventListener("click", async (ev) => {
+// Send your verdict. Right and wrong need a reason the nanites can learn from;
+// "wait and see" may say what to check later.
+async function sendVerdict(decisionId, verdict, reasonInput, resultEl, buttons) {
+  const reason = reasonInput.value.trim();
+  if (verdict !== "wait" && !reason) {
+    resultEl.textContent = "Please add a short reason first, so the nanites can learn from it.";
+    reasonInput.focus();
+    return;
+  }
+  buttons.forEach((b) => (b.disabled = true));
+  try {
+    const r = await post("/api/feedback", { decision_id: decisionId, verdict, reason });
+    resultEl.textContent = `Moiragen: ${r.reply}`;
+    reasonInput.value = "";
+  } catch (err) {
+    resultEl.textContent = `Could not send: ${err.message}`;
+    buttons.forEach((b) => (b.disabled = false));
+  }
+}
+
+$("d-feedback").addEventListener("click", (ev) => {
   const btn = ev.target.closest("button");
   if (!btn || !currentDecision) return;
-  const correct = btn.dataset.correct === "true";
-  let note = "";
-  if (!correct) note = prompt("What was wrong? (optional)") || "";
-  $("d-feedback").querySelectorAll("button").forEach((b) => (b.disabled = true));
-  try {
-    const r = await post("/api/feedback", { decision_id: currentDecision, correct, note });
-    $("d-feedback-result").textContent = `Moiragen: ${r.reply}`;
-  } catch (err) {
-    $("d-feedback-result").textContent = `Could not send: ${err.message}`;
-  }
+  sendVerdict(currentDecision, btn.dataset.verdict, $("d-why"), $("d-feedback-result"),
+              [...$("d-feedback").querySelectorAll("button")]);
 });
+
+// "Waiting to see": answers that can only be judged once the result is known.
+function updateWaiting(list) {
+  const items = list || [];
+  $("waiting").hidden = !items.length;
+  const box = $("waiting-list");
+  const typing = box.contains(document.activeElement);   // don't wipe a reason being typed
+  if (typing && box.dataset.ids === items.map((w) => w.id).join()) return;
+  box.dataset.ids = items.map((w) => w.id).join();
+  box.textContent = "";
+  for (const w of items) {
+    const item = html("div", "wait-item");
+    item.append(html("div", "q", `“${w.question}”`),
+                html("div", "", `${w.chosen || "Moiragen"}: ${w.answer}`),
+                html("div", "check", `What to check: ${w.check || "the result"} · since ${w.time.slice(0, 10)}`));
+    const row = html("div", "feedback");
+    const input = html("input");
+    input.placeholder = "What happened? (your reason)";
+    input.maxLength = 300;
+    const right = html("button", "", "Right");
+    const wrong = html("button", "", "Wrong");
+    const result = html("p", "muted");
+    row.append(input, right, wrong);
+    item.append(row, result);
+    right.onclick = () => sendVerdict(w.id, "right", input, result, [right, wrong]);
+    wrong.onclick = () => sendVerdict(w.id, "wrong", input, result, [right, wrong]);
+    box.append(item);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Chat panel
@@ -331,6 +395,7 @@ function renderChat() {
       ? snapshot.moiragen.self_knowledge : ["Nothing yet."]);
     addList("Recent memories", snapshot.moiragen.memories);
   } else if (n) {
+    if (n.style) addList("Way of seeing", [n.style]);
     addList("Temperament", Object.entries(n.temperament).map(([k, v]) => `${k}: ${v}`));
     addList("Friendships", Object.entries(n.friendships).map(
       ([k, v]) => `${snapshot.nanites.find((x) => x.id === k)?.name || k}: ${Math.round(v)}/100`));
@@ -406,6 +471,8 @@ const SOCIAL = {
   ask_why: { pulse: "ask",     feed: "ask why" },
   explain: { pulse: "ask",     feed: "explains" },
   lesson:  { pulse: null,      feed: "lesson" },
+  disagree:   { pulse: "ask",  feed: "disagrees" },
+  reconsider: { pulse: "ask",  feed: "reconsiders" },
   rest:    { pulse: null,      feed: null },
 };
 
@@ -417,6 +484,7 @@ function handleEvent(e) {
       updateBody(e.body);
       updateSpotlight(e.spotlight);
       setPresence(e.active);
+      updateWaiting(e.waiting);
       if (chatTarget) renderChatHeaderOnly();
       break;
 
@@ -457,8 +525,15 @@ function handleEvent(e) {
       feed("decision", `Chose ${e.chosen} for “${e.question}”: ${e.reason}`, e.time);
       break;
 
+    case "choice_changed":       // a nanite disagreed and Moiragen changed his mind
+      if (e.id === currentDecision) showDecision(e);
+      feed("decision", `Changed his choice to ${e.chosen} for “${e.question}”: ${e.reason}`, e.time);
+      break;
+
     case "feedback":
-      feed(e.correct ? "right" : "wrong", `You said the answer was ${e.correct ? "right" : "wrong"}. ${e.note || ""}`, e.time);
+      feed(e.verdict, e.verdict === "wait"
+        ? `You will wait and see. ${e.reason ? "What to check: " + e.reason : ""}`
+        : `You said the answer was ${e.verdict}. Why: ${e.reason}`, e.time);
       break;
 
     case "chat":

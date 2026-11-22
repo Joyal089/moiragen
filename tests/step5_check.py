@@ -76,13 +76,18 @@ decision = {
 three.feel("disappointed", 0.3)
 three.feel("left_out", 0.2)
 health = three.health
-ev = social.ask_why_not_chosen(three, decision, moiragen)
+ev = social.ask_why_not_chosen(three, decision, moiragen, nanites)
 show(ev)
-assert [e["type"] for e in ev] == ["ask_why", "explain", "lesson"]
-assert three.lessons and three.lessons[-1]["lesson"]
-assert three.health == health, "losing a vote never costs health"
-assert three.lessons[-1]["lesson"] in build_system_prompt(three)
-print("[ok] Not-chosen nanite asked why, learned a lesson, and the lesson is in its prompt")
+kinds = [e["type"] for e in ev]
+# It either learns a lesson, or respectfully disagrees and Moiragen reconsiders.
+assert kinds in (["ask_why", "explain", "lesson"], ["ask_why", "explain", "disagree", "reconsider"]), kinds
+assert three.health == health, "losing a vote (or disagreeing) never costs health"
+if kinds[-1] == "lesson":
+    assert three.lessons and three.lessons[-1]["lesson"]
+    assert three.lessons[-1]["lesson"] in build_system_prompt(three)
+    print("[ok] Not-chosen nanite asked why, learned a lesson, and the lesson is in its prompt")
+else:
+    print("[ok] Not-chosen nanite asked why, disagreed, and Moiragen reconsidered (no health lost)")
 
 # 5. A friend notices and supports it.
 lo = three.emotions["left_out"] + three.emotions["disappointed"]
@@ -108,6 +113,8 @@ assert three.friendships["nanite_two"] < 80
 print("[ok] Unused friendships slowly drift back toward neutral")
 
 # 8. Lessons survive a rebuild (recovered from the life log).
+if not three.lessons:   # it disagreed in part 4 instead of learning, so give it one lesson here
+    three.learn("I learned to say why I see things my way.", source="test")
 (Path(os.environ["MEMORY_DIR"]) / "nanites" / "nanite_three.json").write_text("broken", encoding="utf-8")
 rebuilt = load_all()["nanite_three"]
 assert rebuilt.lessons and rebuilt.lessons[-1]["lesson"] == three.lessons[-1]["lesson"]

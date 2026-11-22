@@ -37,7 +37,17 @@ def show(e: dict) -> None:
         if e["about_me"]:
             print(f"[{at}]   About me: {e['about_me']}")
     elif t == "decision":
-        print(f"[{at}] Moiragen chose {e['chosen']}: {e['reason']}\n[{at}] Moiragen > {e['answer']}")
+        print(f"[{at}] Moiragen chose {e['chosen']}: {e['reason']}")
+        for name, v in e.get("verdicts", {}).items():
+            valued = f"  (+ {', '.join(v['rewards'])})" if v.get("rewards") else ""
+            print(f"[{at}]   to {name}: {v['why']}{valued}")
+        if e.get("wait_and_see"):
+            print(f"[{at}]   He will wait and see if it is right ({e['check']}).")
+        print(f"[{at}] Moiragen > {e['answer']}")
+    elif t == "choice_changed":
+        print(f"[{at}] Moiragen changed his choice to {e['chosen']}: {e['reason']}")
+    elif t == "feedback":
+        print(f"[{at}] Your verdict: {e['verdict']}. {e['reason']}")
     elif t == "story":
         print(f"[{at}] STORY of {e['day']}:\n{e['text']}")
     elif t in ("awake", "asleep", "error"):

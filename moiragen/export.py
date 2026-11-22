@@ -37,8 +37,8 @@ def _decision_labels(events: list[dict]) -> tuple[dict, dict]:
         did = e.get("decision_id") or (e.get("id") if e["kind"] == "decision_full" else None)
         if not did:
             continue
-        if e["kind"] == "decision_full":
-            chosen[did] = e.get("chosen")
+        if e["kind"] in ("decision_full", "choice_changed"):
+            chosen[did] = e.get("chosen")       # a later change of mind wins
         if e["who"] == "Moiragen" and "correct" in e:
             feedback[did] = "right" if e["correct"] else "wrong"   # the last mark wins
     return chosen, feedback

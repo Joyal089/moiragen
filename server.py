@@ -16,7 +16,8 @@ Endpoints:
     GET  /api/state      a snapshot of Moiragen, the nanites, body and stage
     POST /api/ask        {"text": "..."}                      ask Moiragen (nanites suggest, he decides)
     POST /api/chat       {"nanite_id": "nanite_one", "text"}  talk directly to one nanite
-    POST /api/feedback   {"decision_id", "correct", "note"}   mark a decision right or wrong
+    POST /api/feedback   {"decision_id", "verdict", "reason"} verdict: "right" or "wrong" (a
+                         reason is required), or "wait" (wait and see; reason = what to check)
     POST /api/story      write today's story now
     POST /api/active     "I'm here": the viewer sends this when you move the mouse or type
                          (at most once a minute). Without any sign of you for 10 minutes,
@@ -53,8 +54,8 @@ class ChatBody(BaseModel):
 
 class FeedbackBody(BaseModel):
     decision_id: str
-    correct: bool
-    note: str = ""
+    verdict: str          # "right", "wrong" or "wait"
+    reason: str = ""      # required for right/wrong: the nanites learn from it
 
 
 class Broadcaster:
@@ -104,6 +105,8 @@ def create_app(mind: Mind | None = None, start_mind: bool = True) -> FastAPI:
             raise HTTPException(503, f"Moiragen's brain is not available: {e}")
         except KeyError as e:
             raise HTTPException(404, f"Not found: {e}")
+        except ValueError as e:          # e.g. a verdict without a reason
+            raise HTTPException(400, str(e))
 
     # ---------- pages ----------
 
@@ -136,7 +139,7 @@ def create_app(mind: Mind | None = None, start_mind: bool = True) -> FastAPI:
 
     @app.post("/api/feedback")
     async def feedback(body: FeedbackBody):
-        reply = await run_job(app.state.mind.give_feedback, body.decision_id, body.correct, body.note)
+        reply = await run_job(app.state.mind.give_feedback, body.decision_id, body.verdict, body.reason)
         return {"reply": reply}
 
     @app.post("/api/story")

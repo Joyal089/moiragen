@@ -2,7 +2,7 @@
 
 Each step is small, has its own test, and must pass before the next starts.
 
-**Status: all 10 steps built and tested** (tags `v0.1` to `v0.9`, then `v1.0`), plus step 11, the echo-loop fix (`v1.1`). Each step's test is `tests/stepN_check.py`; run them all with `tests/run_all.py`.
+**Status: all 10 steps built and tested** (tags `v0.1` to `v0.9`, then `v1.0`), plus step 11, the echo-loop fix (`v1.1`), and step 12, fairer judging (`v1.2`). Each step's test is `tests/stepN_check.py`; run them all with `tests/run_all.py`.
 
 | # | Step | What gets built | How we test it |
 |---|------|-----------------|----------------|
@@ -17,6 +17,7 @@ Each step is small, has its own test, and must pass before the next starts.
 | 9 | **Viewer app** | Local web page: Moiragen centre, 3 nanites around him, bars, live speech bubbles/lines, suggestions + final choice, click to chat | Use it in the browser |
 | 10 | **Polish** | Fine-tuning-ready log export, error handling, README | Full run-through |
 | 11 | **Echo-loop fix** | Verified memory backups; one-off clean-up of repeated lines (first copy kept); echo guard on every saved line and the fine-tuning log; fresh topics for every talk; warmer temperature + repeat penalty; social rounds limited and paused while nobody uses the app | Copies rejected and retried, nothing copied saved or logged, topics rotate, no brain use while resting |
+| 12 | **Fairer judging** | Every verdict (Moiragen's or yours) comes with a short reason; small mood boosts for honesty, "I don't know" and good questions, chosen or not; a nanite may disagree ("I think you're wrong, Moiragen") at no health cost, and Moiragen says why he keeps or changes his choice; each nanite's own way of seeing is tracked and valued, never forced; "wait and see" for answers only time can check | Stand-in brain checks every rule exactly; the real model gives a reason to every nanite and marks a question about next Friday "wait and see" |
 
 Later (not now): nightly fine-tuning, nanites choosing names (the hooks will be there). No Telegram.
 
@@ -25,7 +26,10 @@ Later (not now): nightly fine-tuning, nanites choosing names (the hooks will be 
 - Before every push, check that no `.env`, `.venv`, `memory/`, model files, secrets or tokens are staged.
 
 ## Decisions taken by default (tell me to change any)
-- **"Being wrong"** = you mark an answer wrong in the chat/viewer. Not being chosen by Moiragen is *not* being wrong: it only causes a mild emotion, never health loss.
+- **"Being wrong"** = you mark an answer wrong in the chat/viewer. Not being chosen by Moiragen is *not* being wrong: it only causes a mild emotion, never health loss. Disagreeing with Moiragen never costs health either.
+- **Honesty and good questions** are judged by Moiragen, with plain-Python checks on top: "I don't know" is found by a pattern, and a "good question" must really contain a question mark.
+- **Styles** are measured by simple word counts and shown only to Moiragen, never written into a nanite's own prompt (that would force it).
+- **Wait and see**: a question naming a future time ("tonight", "by Friday"), or Moiragen saying LATER. In testing the small model alone missed most predictions, so the plain-Python rule backs it up.
 - **Taking turns**: one shared model, a lock makes sure only one mind uses the GPU at a time.
 - **Memory layout**: `memory/log.jsonl` (everything, for fine-tuning), `memory/nanites/<id>.json` (each nanite's state + memories), `memory/moiragen.json`, `memory/stories/<date>.md`.
 - **Libraries**: `requests`, `python-dotenv` now; `fastapi` + `uvicorn` at step 8. No heavy frameworks.

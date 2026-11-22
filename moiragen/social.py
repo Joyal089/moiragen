@@ -14,11 +14,13 @@ which the viewer app will later draw as speech bubbles and lines.
 """
 
 import random
+import re
 
 from .echo import split_sentences
 from .memory_log import log_event
 from .mind import nanite_think, TIRED
 from .nanite import Nanite
+from .styles import ways_text
 from .topics import Topic, picker
 
 # --- Tunable numbers ---
@@ -164,20 +166,34 @@ def lesson_from(reply: str) -> str:
     return reply.strip().split("\n")[0]
 
 
-def ask_why_not_chosen(n: Nanite, decision: dict, moiragen) -> list[dict]:
-    """A nanite whose idea lost asks Moiragen why, then sums up what it learned."""
+# "I think you're wrong, Moiragen" in its common spellings.
+DISAGREE = re.compile(r"\bI think you(?:'re|’re| are) wrong\b", re.IGNORECASE)
+
+
+def disagrees(reply: str) -> bool:
+    """True if a nanite respectfully told Moiragen he was wrong."""
+    return bool(DISAGREE.search(reply))
+
+
+def ask_why_not_chosen(n: Nanite, decision: dict, moiragen, nanites: dict[str, Nanite]) -> list[dict]:
+    """A nanite whose idea lost asks Moiragen why. Then it either learns a
+    lesson in its own way, or respectfully disagrees ("I think you're wrong,
+    Moiragen") and Moiragen reconsiders. Disagreeing never costs health."""
     mine = next((s["text"] for s in decision["suggestions"] if s["nanite_id"] == n.id), None)
     if mine is None or decision["chosen"] == n.name:
         return []
     question = (f"Why did you choose {decision['chosen']}'s answer instead of mine "
                 f"for \"{decision['question']}\"?")
-    explanation = moiragen.explain_choice(decision, n.name, mine)
-    # The nanite reflects and writes ONE lesson in its own words.
-    reflection = nanite_think(
+    explanation = moiragen.explain_choice(decision, n.name, mine, ways_text(nanites))
+    # The nanite thinks it over: a lesson, or an honest disagreement.
+    answer = nanite_think(
         n,
         f"You asked Moiragen: {question}\nMoiragen explained: {explanation}\n"
-        f"In ONE short sentence starting with 'I learned', say what you will do "
-        f"differently next time.",
+        f"Think about it honestly, in your own way. If you still believe your answer was "
+        f"better, you may say so respectfully: start with \"I think you're wrong, Moiragen\" "
+        f"and explain why in one or two sentences. Disagreeing is welcome and never costs you "
+        f"anything. If his reason makes sense to you, write ONE short sentence starting with "
+        f"'I learned' about what you will do next time.",
         from_who="self", save=False,
         note=f"I asked Moiragen: {question} He explained: {explanation}")
     n.feel("disappointed", -0.1)       # understanding why softens the sting
@@ -186,8 +202,16 @@ def ask_why_not_chosen(n: Nanite, decision: dict, moiragen) -> list[dict]:
         _event("ask_why", **{"from": n.name, "to": "Moiragen", "text": question}),
         _event("explain", **{"from": "Moiragen", "to": n.name, "text": explanation}),
     ]
-    if not _silent(reflection):        # a lesson only if it said something new
-        lesson = lesson_from(reflection["reply"])
+    if _silent(answer):                # nothing new to say: no lesson, no disagreement
+        return events
+    if disagrees(answer["reply"]):
+        events.append(_event("disagree", **{"from": n.name, "to": "Moiragen", "text": answer["reply"]}))
+        r = moiragen.reconsider(decision, n.name, mine, answer["reply"], nanites)
+        events.append(_event("reconsider", **{"from": "Moiragen", "to": n.name, "text": r["why"],
+                                              "changed": r["changed"], "chosen": r["chosen"],
+                                              "decision_id": decision["id"]}))
+    else:
+        lesson = lesson_from(answer["reply"])
         n.learn(lesson, source=f"decision {decision['id']}")
         events.append(_event("lesson", **{"from": n.name, "to": n.name, "text": lesson}))
     return events
@@ -201,18 +225,24 @@ def after_decision(decision: dict, nanites: dict[str, Nanite], moiragen, rng=ran
     """What happens socially right after Moiragen decides.
 
     - At most one not-chosen nanite asks why (curious ones ask more often).
+      It may learn a lesson, or disagree and make Moiragen reconsider.
     - Its closest awake friend may notice and support it (warm ones more often).
+    A "wait and see" decision has no winner or loser yet, so nobody asks why.
     """
     events = []
+    if decision.get("wait_and_see"):
+        return events
     losers = [nanites[s["nanite_id"]] for s in decision["suggestions"]
               if s["nanite"] != decision["chosen"]]
     rng.shuffle(losers)
     for n in losers:
         chance = n.temperament["curiosity"] + n.emotions.get("disappointed", 0)
         if n.energy >= TIRED and rng.random() < chance:
-            events += ask_why_not_chosen(n, decision, moiragen)
+            events += ask_why_not_chosen(n, decision, moiragen, nanites)
             break
 
+    # Who is not chosen now (Moiragen may have changed his mind).
+    losers = [n for n in losers if n.name != decision["chosen"]]
     down = [n for n in losers if needs_support(n)]
     if down:
         friend = max(down, key=lambda n: n.emotions["left_out"] + n.emotions["disappointed"])

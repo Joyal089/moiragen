@@ -45,6 +45,7 @@ from .prediction import Predictor
 from .social import after_decision, social_round, needs_help
 from .stage import Stage
 from .story import story_path, write_daily_story
+from .styles import describe as describe_style
 
 # --- Tunable numbers ---
 TICK_SECONDS = 20          # pause between idle ticks
@@ -58,6 +59,7 @@ STORY_HOUR = 22            # write today's story after this hour
 
 # How important each kind of social event is when posted to the stage.
 SOCIAL_IMPORTANCE = {"help": 0.65, "ask_why": 0.55, "explain": 0.5, "lesson": 0.55,
+                     "disagree": 0.6, "reconsider": 0.55,
                      "support": 0.5, "talk": 0.3, "rest": 0.1}
 
 
@@ -100,6 +102,7 @@ class Mind:
                 "friendships": dict(n.friendships),
                 "temperament": dict(n.temperament),
                 "lessons": [l["lesson"] for l in n.lessons[-5:]],
+                "style": describe_style(n.style) if n.style else "",
                 "memories": [f"[{x['kind']}] {x['text']}" for x in n.memories[-5:]],
             })
         recent = list(m.decisions.values())[-5:]
@@ -114,6 +117,10 @@ class Mind:
             "spotlight": self.stage.spotlight.as_dict() if self.stage.spotlight else None,
             "stage_history": [t.as_dict() for t in self.stage.history[-10:]],
             "decisions": recent,
+            # "Wait and see" decisions: judged by you once the result is known.
+            "waiting": [{"id": d["id"], "time": d["time"], "question": d["question"],
+                         "chosen": d["chosen"], "answer": d["answer"], "check": d.get("check", "")}
+                        for d in m.waiting()],
             "active": self.active,
         }
 
@@ -205,9 +212,10 @@ class Mind:
         """Talk directly to one nanite."""
         return self.call(self.handle_chat, nanite_id, text, timeout=timeout)
 
-    def give_feedback(self, decision_id: str, correct: bool, note: str = "") -> str:
-        """Tell Moiragen whether a decision was right."""
-        return self.call(self.handle_feedback, decision_id, correct, note)
+    def give_feedback(self, decision_id: str, verdict: str, reason: str = "") -> str:
+        """Tell Moiragen whether a decision was right or wrong (with a short
+        reason), or that it is one to wait and see ("wait")."""
+        return self.call(self.handle_feedback, decision_id, verdict, reason)
 
     def request_story(self, timeout: float = 300) -> str | None:
         """Write today's story now."""
@@ -225,11 +233,12 @@ class Mind:
         self._vitals()
         return out
 
-    def handle_feedback(self, decision_id: str, correct: bool, note: str = "") -> str:
-        msg = self.moiragen.feedback(decision_id, correct, self.nanites, note)
-        self.emit("feedback", decision_id=decision_id, correct=correct, note=note, reply=msg)
-        if not correct:
-            self.stage.post("user", "mistake", f"The human said a decision was wrong. {note}", 0.9)
+    def handle_feedback(self, decision_id: str, verdict: str, reason: str = "") -> str:
+        msg = self.moiragen.feedback(decision_id, verdict, self.nanites, reason)
+        verdict = verdict.strip().lower()
+        self.emit("feedback", decision_id=decision_id, verdict=verdict, reason=reason, reply=msg)
+        if verdict == "wrong":
+            self.stage.post("user", "mistake", f"The human said a decision was wrong. Why: {reason}", 0.9)
             self._attend()
         self._vitals()
         return msg
@@ -251,6 +260,9 @@ class Mind:
                         decision_id=d["id"])
         for e in after_decision(d, self.nanites, self.moiragen, self.rng):
             self._social(e)
+        if d.get("changed_after"):
+            # A nanite disagreed and Moiragen changed his mind: the viewer updates its card.
+            self.emit("choice_changed", **d)
         self._attend()
         self._vitals()
         return d

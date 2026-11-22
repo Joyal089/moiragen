@@ -59,7 +59,7 @@ print("[ok] Chosen nanite happy; others mildly disappointed, health untouched")
 # 4. Feedback: "wrong" hurts only the chosen nanite.
 chosen = next(n for n in nanites.values() if n.name == d["chosen"])
 others = [n for n in nanites.values() if n is not chosen]
-reply = moiragen.feedback(d["id"], correct=False, nanites=nanites, note="(just a test)")
+reply = moiragen.feedback(d["id"], "wrong", nanites, reason="(just a test)")
 assert chosen.health == 100 - WRONG_ANSWER_DAMAGE
 assert all(o.health == 100 for o in others)
 assert moiragen.memories[-1]["kind"] == "mistake"
@@ -67,7 +67,7 @@ print(f"[ok] Marked wrong: {chosen.name} health -> {chosen.health}, others uncha
 
 # 5. Feedback: "right" makes it happy, no health change.
 before = chosen.health
-moiragen.feedback(d["id"], correct=True, nanites=nanites)
+moiragen.feedback(d["id"], "right", nanites, reason="(just a test) it was right")
 assert chosen.health == before and moiragen.memories[-1]["kind"] == "feedback"
 print("[ok] Marked right: happy, no health change")
 

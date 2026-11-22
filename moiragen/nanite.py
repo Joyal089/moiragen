@@ -14,6 +14,7 @@ import os
 from .blueprint import get_blueprint, random_temperament
 from .config import MEMORY_DIR
 from .memory_log import log_event, read_events
+from .styles import starting_style
 
 NANITE_DIR = MEMORY_DIR / "nanites"
 NANITE_DIR.mkdir(parents=True, exist_ok=True)
@@ -48,6 +49,7 @@ class Nanite:
     friendships: dict = field(default_factory=dict)  # {"nanite_two": 50, ...}
     memories: list = field(default_factory=list)     # recent memories
     lessons: list = field(default_factory=list)      # things it learned; these shape who it becomes
+    style: dict = field(default_factory=dict)        # its own way of seeing (see styles.py)
     chosen_name: str | None = None                   # filled in later by the nanite itself
     born: str = field(default_factory=_now)
 
@@ -142,6 +144,12 @@ class Nanite:
         if emotion != "tired":  # being tired does not change mood by itself
             self.mood = self._clamp("mood", self.mood + mood_push)
         log_event("emotion", self.name, emotion=emotion, strength=self.emotions[emotion], mood=self.mood)
+
+    def lift_mood(self, amount: float, reason: str) -> None:
+        """A small boost to mood, e.g. for an honest answer or a good question.
+        (Used for rewards that are not one of the blueprint's feelings.)"""
+        self.mood = self._clamp("mood", self.mood + amount)
+        log_event("mood_lift", self.name, change=amount, mood=self.mood, reason=reason)
 
     def change_friendship(self, other_id: str, amount: float) -> None:
         """Friendship rises when helped or supported, falls when ignored."""
@@ -258,4 +266,9 @@ def load_all() -> dict[str, Nanite]:
         helper.spend_energy(15, f"rebuilt {nanites[nid].name}")
         helper.save()
 
+    # Nanites from before styles were tracked start from their known way of seeing.
+    for n in nanites.values():
+        if not n.style:
+            n.style = starting_style(n.id)
+            n.save()
     return nanites

@@ -51,8 +51,13 @@ with TestClient(app) as client:
     # 2. Bad requests are refused politely.
     assert client.post("/api/chat", json={"nanite_id": "nanite_nine", "text": "hi"}).status_code == 404
     assert client.post("/api/ask", json={"text": "   "}).status_code == 400
-    assert client.post("/api/feedback", json={"decision_id": "nope", "correct": True}).status_code == 404
+    assert client.post("/api/feedback", json={"decision_id": "nope", "verdict": "right", "reason": "x"}).status_code == 404
     print("[ok] Unknown nanite, empty question and unknown decision are refused")
+    # A right/wrong verdict always needs a reason the nanites can learn from.
+    d0 = client.post("/api/ask", json={"text": "Say hello in one word."}).json()
+    assert client.post("/api/feedback", json={"decision_id": d0["id"], "verdict": "wrong"}).status_code == 400
+    assert client.post("/api/feedback", json={"decision_id": d0["id"], "verdict": "maybe", "reason": "x"}).status_code == 400
+    print("[ok] A verdict without a reason, or an unknown verdict, is refused (400)")
 
     with client.websocket_connect("/ws") as ws:
         # 3. On connect the browser gets the full picture first.
@@ -79,7 +84,7 @@ with TestClient(app) as client:
         # 6. Feedback: wrong -> chosen nanite loses health, visible in the next snapshot.
         chosen_id = next(s["nanite_id"] for s in d["suggestions"] if s["nanite"] == d["chosen"])
         before = next(n["health"] for n in client.get("/api/state").json()["nanites"] if n["id"] == chosen_id)
-        r = client.post("/api/feedback", json={"decision_id": d["id"], "correct": False, "note": "test"})
+        r = client.post("/api/feedback", json={"decision_id": d["id"], "verdict": "wrong", "reason": "test"})
         assert r.status_code == 200
         read_until(ws, lambda e: e["type"] == "feedback")          # skip older queued events
         e, _ = read_until(ws, lambda e: e["type"] == "vitals")      # the snapshot sent after it

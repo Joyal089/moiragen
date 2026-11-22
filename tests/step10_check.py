@@ -29,7 +29,7 @@ from moiragen.nanite import load_all
 nanites = load_all()
 m = Moiragen.load()
 d = m.decide("Name one primary colour.", nanites)
-m.feedback(d["id"], correct=False, nanites=nanites, note="test")
+m.feedback(d["id"], "wrong", nanites, reason="test")
 path, summary = export_training()
 print(f"  {json.dumps(summary)}")
 rows = [json.loads(l) for l in open(path, encoding="utf-8")]

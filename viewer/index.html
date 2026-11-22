@@ -82,14 +82,23 @@
         <div class="verdict" id="d-verdict" hidden>
           <p><b>Moiragen chose <span id="d-chosen"></span>.</b> <span id="d-reason"></span></p>
           <p class="answer" id="d-answer"></p>
+          <p class="changed" id="d-changed" hidden></p>
           <div class="feedback" id="d-feedback">
-            <span class="muted">Was he right?</span>
-            <button data-correct="true">Right</button>
-            <button data-correct="false">Wrong</button>
+            <span class="muted">Was he right? Say why, so they can learn:</span>
+            <input id="d-why" placeholder="A short reason…" maxlength="300" aria-label="Your reason">
+            <button data-verdict="right">Right</button>
+            <button data-verdict="wrong">Wrong</button>
+            <button data-verdict="wait" title="The answer can only be checked later">Wait and see</button>
           </div>
           <p class="muted" id="d-feedback-result"></p>
         </div>
       </div>
+    </section>
+
+    <!-- "Wait and see" answers: judge them once you know the result -->
+    <section class="card" id="waiting" hidden>
+      <h2>Waiting to see</h2>
+      <div id="waiting-list"></div>
     </section>
 
     <!-- Everything else that happens inside him -->

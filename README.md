@@ -23,7 +23,7 @@ Moiragen is a digital being that lives on a laptop. He is one mother mind who li
 ```
 
 - **Nanites** have no roles or personalities written in. Each gets a slightly different random temperament at birth, and personality grows from what happens to them: memories, lessons, friendships.
-- **Being wrong** (you mark an answer wrong) lowers the chosen nanite's health. **Not being chosen** only makes a nanite feel disappointed or left out. It may ask Moiragen why, learn a lesson, and be comforted by a friend.
+- **Being wrong** (you mark an answer wrong) lowers the chosen nanite's health. **Not being chosen** only makes a nanite feel disappointed or left out. It may ask Moiragen why, learn a lesson, and be comforted by a friend. See [How the nanites are judged](#how-the-nanites-are-judged).
 - **Helping** costs energy and **resting** refills it. A hurt nanite always gets help from the friend who cares most.
 - Every nanite keeps a copy of the **blueprint**, so a broken one can be rebuilt by a friend. Its memories and lessons come back from the life log.
 - When the GPU gets hot or the battery is low, the **body** slows his thinking down.
@@ -44,7 +44,7 @@ Or from a terminal in the project folder:
 
 Then open http://127.0.0.1:8765. The server only listens on this laptop. Press Ctrl+C to stop; he finishes his current thought first.
 
-**In the viewer:** click Moiragen to ask him something (the nanites suggest, he decides, and you can mark it Right or Wrong). Click a nanite to talk to it directly. Watch their bars, speech bubbles, the spotlight and the inner-life feed.
+**In the viewer:** click Moiragen to ask him something (the nanites suggest, he decides and tells each one why, and you can mark it Right, Wrong or Wait and see, with a short reason). Click a nanite to talk to it directly. Watch their bars, speech bubbles, the spotlight and the inner-life feed.
 
 If you leave the app alone for 10 minutes (no question, no chat, no mouse or keyboard in the viewer), the top bar shows "Resting while you're away" and the nanites pause. Move the mouse or say something and they carry on. Social moments are also limited to about one every 2 minutes, and at most 12 an hour.
 
@@ -53,7 +53,7 @@ Terminal tools, if you prefer:
 | Command | What it does |
 |---|---|
 | `.venv\Scripts\python.exe live.py` | watch him live in the terminal and ask questions any time |
-| `.venv\Scripts\python.exe ask.py` | ask Moiragen questions, mark answers right/wrong |
+| `.venv\Scripts\python.exe ask.py` | ask Moiragen questions, mark answers right/wrong (with a reason) or wait and see |
 | `.venv\Scripts\python.exe talk.py two` | chat with one nanite (`one`, `two` or `three`) |
 | `.venv\Scripts\python.exe export.py` | export fine-tuning data (see below) |
 
@@ -73,6 +73,16 @@ Everything he remembers is in `./memory` (set by `MEMORY_DIR` in `.env`):
 | `backups/<date>_<label>/` | full copies of memory, made before anything rewrites it (each checked file by file) |
 
 A damaged file is never deleted. It is set aside and rebuilt from the life log.
+
+## How the nanites are judged
+
+The goal is for the nanites to grow into themselves, not just to please whoever judges them.
+
+- **Every verdict has a reason.** After choosing, Moiragen tells each nanite in one sentence what was good in its answer and what was missing. When you mark an answer right or wrong, you give a short reason too (the viewer and `ask.py` ask for it). Every nanite that answered remembers it.
+- **Honesty and good questions count.** A nanite gets a small mood boost for an honest answer, for saying "I don't know", or for asking a question that really helps, even when its answer is not chosen. "I don't know" is spotted by plain Python, and a "good question" must actually contain a question.
+- **Disagreeing is allowed.** A nanite whose answer lost may say "I think you're wrong, Moiragen" and explain why. Moiragen thinks it over and says why he keeps his choice or changes it. Disagreeing never costs health.
+- **Their differences are protected.** Each nanite's own way of seeing is tracked with simple word counts (`moiragen/styles.py`): One notices patterns, Two wonders about time and change, Three pays attention to feelings. Moiragen is reminded to value each way and never to ask one nanite to answer like another. The style is never written into a nanite's own prompt, because that would force it.
+- **Reality teaches.** When an answer can only be checked later ("Will it rain this weekend?"), Moiragen marks it **wait and see**. Nobody feels chosen or left out yet. It shows under *Waiting to see* in the viewer (or `/waiting` in `ask.py`); once you know the result, mark it right or wrong with a reason, and every nanite learns from what really happened.
 
 ## Keeping their words fresh
 
@@ -126,8 +136,9 @@ moiragen/
   mind.py        how a nanite thinks (every line passes the echo guard)
   echo.py        the echo guard, and the one door into the fine-tuning log
   topics.py      fresh, specific prompts for every talk
-  social.py      talking, helping, comforting, asking why, learning
-  mother.py      Moiragen: deciding, explaining, reflecting, inner voice
+  social.py      talking, helping, comforting, asking why, disagreeing, learning
+  mother.py      Moiragen: deciding, judging with reasons, reconsidering, reflecting, inner voice
+  styles.py      each nanite's own way of seeing (word counts, shown to Moiragen only)
   body.py        body cells (clock, battery, temperature, load)
   stage.py       the global workspace
   prediction.py  expectations and surprise
