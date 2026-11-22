@@ -109,7 +109,7 @@ class Mind:
         return {
             "moiragen": {
                 "name": m.name, "self_knowledge": [k["text"] for k in m.self_knowledge[-6:]],
-                "body_note": m.body_note,
+                "body_note": m.body_note, "health": m.health,
                 "memories": [f"[{x['kind']}] {x['text']}" for x in m.memories[-5:]],
             },
             "nanites": nanites,

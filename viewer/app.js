@@ -271,6 +271,7 @@ function showVerdict(card, v) {
   box.append(html("b", "", "Moiragen: "), document.createTextNode(v.why || ""));
   const badges = [];
   if (v.honest) badges.push(v.dont_know ? "honest: “I don't know”" : "honest");
+  if (v.false_claims?.length) badges.push("made-up memory, corrected");
   if (v.good_question) badges.push("good question");
   if (badges.length) {
     const row = html("div");
@@ -376,7 +377,7 @@ function renderChat() {
   const n = snapshot?.nanites.find((x) => x.id === chatTarget);
   $("chat-title").textContent = isM ? "Moiragen" : (n?.name || chatTarget);
   $("chat-sub").textContent = isM
-    ? "He asks the nanites, then decides."
+    ? `He asks the nanites, then decides · health ${Math.round(snapshot?.moiragen.health ?? 100)}`
     : n ? `Feeling ${n.feeling} · health ${Math.round(n.health)} · energy ${Math.round(n.energy)} · mood ${Math.round(n.mood)}` : "";
   $("chat-input").placeholder = isM ? "Ask Moiragen something…" : `Say something to ${n?.name || "them"}…`;
 

@@ -14,8 +14,8 @@ which the viewer app will later draw as speech bubbles and lines.
 """
 
 import random
-import re
 
+from . import facts
 from .echo import split_sentences
 from .memory_log import log_event
 from .mind import nanite_think, TIRED
@@ -32,6 +32,7 @@ FRIENDSHIP_TALK = 2      # a good talk brings both a little closer
 FRIENDSHIP_HELP = 3      # helping makes the helper care more too
 FRIENDSHIP_SUPPORT = 4
 FRIENDSHIP_DRIFT = 0.5   # unused friendships slowly drift back toward neutral
+HONESTY_LIFT = 4         # mood boost for admitting a mistake or changing your mind (same as mother.py)
 
 
 def _event(type_: str, **data) -> dict:
@@ -166,13 +167,10 @@ def lesson_from(reply: str) -> str:
     return reply.strip().split("\n")[0]
 
 
-# "I think you're wrong, Moiragen" in its common spellings.
-DISAGREE = re.compile(r"\bI think you(?:'re|’re| are) wrong\b", re.IGNORECASE)
-
-
 def disagrees(reply: str) -> bool:
-    """True if a nanite respectfully told Moiragen he was wrong."""
-    return bool(DISAGREE.search(reply))
+    """True if a nanite told Moiragen he was wrong: "I think you're wrong",
+    and also softer ways like "you prioritized the wrong thing" (facts.disagrees)."""
+    return facts.disagrees(reply)
 
 
 def ask_why_not_chosen(n: Nanite, decision: dict, moiragen, nanites: dict[str, Nanite]) -> list[dict]:
@@ -214,6 +212,10 @@ def ask_why_not_chosen(n: Nanite, decision: dict, moiragen, nanites: dict[str, N
         lesson = lesson_from(answer["reply"])
         n.learn(lesson, source=f"decision {decision['id']}")
         events.append(_event("lesson", **{"from": n.name, "to": n.name, "text": lesson}))
+        # Admitting a mistake or changing your mind is a clear sign of honesty.
+        signs = [s for s in facts.honesty_signs(answer["reply"]) if "did not know" not in s]
+        if signs:
+            n.lift_mood(HONESTY_LIFT, f"{' and '.join(signs)} about \"{decision['question']}\"")
     return events
 
 

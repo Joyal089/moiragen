@@ -23,7 +23,7 @@ Moiragen is a digital being that lives on a laptop. He is one mother mind who li
 ```
 
 - **Nanites** have no roles or personalities written in. Each gets a slightly different random temperament at birth, and personality grows from what happens to them: memories, lessons, friendships.
-- **Being wrong** (you mark an answer wrong) lowers the chosen nanite's health. **Not being chosen** only makes a nanite feel disappointed or left out. It may ask Moiragen why, learn a lesson, and be comforted by a friend. See [How the nanites are judged](#how-the-nanites-are-judged).
+- **Being wrong** (you mark an answer wrong) costs health, shared fairly: Moiragen chose the answer, so he takes half and the chosen nanite takes half. **Not being chosen** only makes a nanite feel disappointed or left out. It may ask Moiragen why, learn a lesson, and be comforted by a friend. See [How the nanites are judged](#how-the-nanites-are-judged).
 - **Helping** costs energy and **resting** refills it. A hurt nanite always gets help from the friend who cares most.
 - Every nanite keeps a copy of the **blueprint**, so a broken one can be rebuilt by a friend. Its memories and lessons come back from the life log.
 - When the GPU gets hot or the battery is low, the **body** slows his thinking down.
@@ -79,10 +79,15 @@ A damaged file is never deleted. It is set aside and rebuilt from the life log.
 The goal is for the nanites to grow into themselves, not just to please whoever judges them.
 
 - **Every verdict has a reason.** After choosing, Moiragen tells each nanite in one sentence what was good in its answer and what was missing. When you mark an answer right or wrong, you give a short reason too (the viewer and `ask.py` ask for it). Every nanite that answered remembers it.
-- **Honesty and good questions count.** A nanite gets a small mood boost for an honest answer, for saying "I don't know", or for asking a question that really helps, even when its answer is not chosen. "I don't know" is spotted by plain Python, and a "good question" must actually contain a question.
-- **Disagreeing is allowed.** A nanite whose answer lost may say "I think you're wrong, Moiragen" and explain why. Moiragen thinks it over and says why he keeps his choice or changes it. Disagreeing never costs health.
+- **Judge the answer, not the speaker.** Moiragen first compares the answers (where they agree, where they differ), then chooses by whether the answer itself is correct. Past record and confident wording count for nothing.
+- **Plain Python checks the facts it can** (`moiragen/facts.py`):
+  - **Maths:** a small calculator works out sums and number sequences (2, 6, 12, 20, 30 → 42). If Moiragen picks a wrong number and another nanite got it right, his choice moves to the right one, and he says why.
+  - **Claims about the past:** if a nanite says "I was chosen for this before" or "I remember…", the claim is looked up in the life log. If it never happened, Moiragen points it out kindly and gives no credit for it.
+- **Honesty and good questions count.** A nanite gets a small mood boost for a clear sign of honesty ("I don't know", "I'm not sure", admitting a mistake, changing its mind) or for asking a question that really helps, even when its answer is not chosen. A confident answer is not a sign of honesty, however correct. Plain Python decides this, not the model, and a "good question" must actually contain a question.
+- **A fair cost.** When you mark an answer wrong, Moiragen shares the health loss with the nanite he chose (half each). A right answer heals him a little.
+- **Disagreeing is allowed.** A nanite whose answer lost may say "I think you're wrong, Moiragen", or something softer like "you prioritized the calculation over the structure". Either way, Moiragen thinks it over and says why he keeps his choice or changes it. Disagreeing never costs health.
 - **Their differences are protected.** Each nanite's own way of seeing is tracked with simple word counts (`moiragen/styles.py`): One notices patterns, Two wonders about time and change, Three pays attention to feelings. Moiragen is reminded to value each way and never to ask one nanite to answer like another. The style is never written into a nanite's own prompt, because that would force it.
-- **Reality teaches.** When an answer can only be checked later ("Will it rain this weekend?"), Moiragen marks it **wait and see**. Nobody feels chosen or left out yet. It shows under *Waiting to see* in the viewer (or `/waiting` in `ask.py`); once you know the result, mark it right or wrong with a reason, and every nanite learns from what really happened.
+- **Reality teaches.** When an answer depends on a real future event ("Will it rain this weekend?"), Moiragen marks it **wait and see**. An imagined situation ("A friend says…", "Imagine…") never is: there is no real result to wait for. Nobody feels chosen or left out yet. It shows under *Waiting to see* in the viewer (or `/waiting` in `ask.py`); once you know the result, mark it right or wrong with a reason, and every nanite learns from what really happened.
 
 ## Keeping their words fresh
 
@@ -139,6 +144,7 @@ moiragen/
   social.py      talking, helping, comforting, asking why, disagreeing, learning
   mother.py      Moiragen: deciding, judging with reasons, reconsidering, reflecting, inner voice
   styles.py      each nanite's own way of seeing (word counts, shown to Moiragen only)
+  facts.py       plain-Python checks: calculator, past claims, honesty signs, disagreement
   body.py        body cells (clock, battery, temperature, load)
   stage.py       the global workspace
   prediction.py  expectations and surprise

@@ -15,6 +15,7 @@ os.environ["MEMORY_DIR"] = tempfile.mkdtemp(prefix="moiragen_test_")
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from moiragen import mother as mother_mod
 from moiragen.mother import Moiragen, parse_choice, WRONG_ANSWER_DAMAGE
 from moiragen.nanite import load_all
 
@@ -56,20 +57,23 @@ for nid, n in nanites.items():
     assert n.health == health_before[nid], "not being chosen must never cost health"
 print("[ok] Chosen nanite happy; others mildly disappointed, health untouched")
 
-# 4. Feedback: "wrong" hurts only the chosen nanite.
+# 4. Feedback: "wrong" costs health, shared fairly by Moiragen and the chosen nanite.
 chosen = next(n for n in nanites.values() if n.name == d["chosen"])
 others = [n for n in nanites.values() if n is not chosen]
 reply = moiragen.feedback(d["id"], "wrong", nanites, reason="(just a test)")
-assert chosen.health == 100 - WRONG_ANSWER_DAMAGE
+assert chosen.health == 100 - WRONG_ANSWER_DAMAGE / 2
+assert moiragen.health == 100 - WRONG_ANSWER_DAMAGE / 2, "Moiragen chose it, so he shares the cost"
 assert all(o.health == 100 for o in others)
-assert moiragen.memories[-1]["kind"] == "mistake"
-print(f"[ok] Marked wrong: {chosen.name} health -> {chosen.health}, others unchanged. Moiragen: '{reply}'")
+assert moiragen.memories[-1]["kind"] == "mistake" and "share the cost" in moiragen.memories[-1]["text"]
+print(f"[ok] Marked wrong: {chosen.name} health -> {chosen.health}, Moiragen -> {moiragen.health}, "
+      f"others unchanged. Moiragen: '{reply}'")
 
-# 5. Feedback: "right" makes it happy, no health change.
-before = chosen.health
+# 5. Feedback: "right" makes it happy; Moiragen recovers a little.
+before, m_before = chosen.health, moiragen.health
 moiragen.feedback(d["id"], "right", nanites, reason="(just a test) it was right")
 assert chosen.health == before and moiragen.memories[-1]["kind"] == "feedback"
-print("[ok] Marked right: happy, no health change")
+assert moiragen.health == m_before + mother_mod.RIGHT_ANSWER_HEAL
+print("[ok] Marked right: happy, Moiragen recovers a little health")
 
 # 6. Moiragen remembers after a restart.
 again = Moiragen.load()

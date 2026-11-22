@@ -5,17 +5,26 @@ How one decision works:
   2. Each nanite that has the energy suggests an answer.
   3. Moiragen reads all suggestions, picks the one he trusts most, and
      explains why. He then gives his final answer in his own words.
+     Before he chooses, plain Python checks a few things for him (facts.py):
+     a calculator for maths questions, and whether any claim about the past
+     ("I was chosen for this before") is really in the life log. He judges
+     the answer, not the speaker: past record and confident words count for
+     nothing.
   4. Moiragen judges: every nanite gets a short reason it can learn from.
-     An honest answer, an honest "I don't know" or a good question earns a
-     small mood boost, even when that answer is not chosen. Each nanite's
-     own way of seeing (styles.py) is valued, never pushed to be the same.
-  5. If nobody can know yet whether the answer is right (a prediction, a
-     plan), Moiragen marks it "wait and see" instead of guessing: nobody
-     feels chosen or left out until the result is known.
+     Clear signs of honesty ("I don't know", "I'm not sure", admitting a
+     mistake, changing your mind) or a good question earn a small mood boost,
+     even when that answer is not chosen. A confident answer is not a sign of
+     honesty. A made-up memory is pointed out kindly and earns nothing.
+     Each nanite's own way of seeing (styles.py) is valued, never pushed to be the same.
+  5. If the answer depends on a real future event (tonight's weather, next
+     week's result), Moiragen marks it "wait and see" instead of guessing:
+     nobody feels chosen or left out until the result is known. An imagined
+     situation ("A friend says...", "Imagine...") is never "wait and see".
   6. Otherwise feelings follow: the chosen nanite feels happy; the others
      feel a mild disappointment or left out. Not being chosen NEVER costs health.
   7. Later you say whether the answer was right or wrong, always with a short
-     reason. Only a wrong answer hurts the health of the chosen nanite.
+     reason. A wrong answer costs health, shared fairly: Moiragen chose it, so
+     he takes half of the loss and the chosen nanite the other half.
      A nanite may also disagree with Moiragen (see social.py); disagreeing
      never costs health, and Moiragen says why he keeps or changes his choice.
 
@@ -32,6 +41,8 @@ import uuid
 
 from .config import MEMORY_DIR
 from .echo import record_training_example
+from .facts import (I_DONT_KNOW, calculator_check, false_past_claims, final_number,
+                    honesty_signs, made_up_situation)
 from .llm import think
 from .memory_log import log_event, read_events
 from .mind import nanite_think
@@ -42,7 +53,8 @@ MOIRAGEN_FILE = MEMORY_DIR / "moiragen.json"
 
 # --- Tunable numbers ---
 DECIDE_TEMPERATURE = 0.3   # Moiragen thinks calmly when choosing
-WRONG_ANSWER_DAMAGE = 15   # health lost by the chosen nanite if you mark it wrong
+WRONG_ANSWER_DAMAGE = 15   # health lost when you mark an answer wrong, shared by Moiragen and the chosen nanite
+RIGHT_ANSWER_HEAL = 5      # Moiragen recovers a little health when you mark an answer right
 HAPPY_WHEN_CHOSEN = 0.3
 DISAPPOINTED_WHEN_NOT = 0.2
 LEFT_OUT_WHEN_NOT = 0.1
@@ -51,11 +63,11 @@ QUESTION_LIFT = 4          # mood boost for asking a good question
 MEMORY_KEEP = 300
 KEEP_DECISIONS = 50        # decisions kept in his file (waiting ones are always kept)
 
-# "I don't know" in its common forms (plain Python, so it never depends on the model).
-I_DONT_KNOW = re.compile(
-    r"\bI (?:really )?(?:do not|don't|don’t) know\b"
-    r"|\bI(?:'m| am|’m) not (?:sure|certain)\b"
-    r"|\bI have no way (?:of|to) know", re.IGNORECASE)
+# Said to Moiragen every time he chooses or judges.
+JUDGE_THE_ANSWER = (
+    "Judge the answer, not the speaker: choose by whether the answer itself is correct and "
+    "helpful. Ignore who said it, anyone's past record, claims about the past, and how "
+    "confident or polished it sounds.")
 
 
 def says_i_dont_know(text: str) -> bool:
@@ -96,6 +108,7 @@ class Moiragen:
     self_knowledge: list = field(default_factory=list)  # what he has learned about himself, from reflection
     body_note: str = ""                                 # latest one-line sense of his body (set by the loop)
     born: str = field(default_factory=_now)
+    health: float = 100.0                               # drops when he trusts a wrong answer (shared with the nanite)
 
     name = "Moiragen"
 
@@ -209,9 +222,12 @@ class Moiragen:
             choice = {"chosen": None, "reason": "All my nanites were resting, so I answered alone.",
                       "answer": self._answer_alone(question)}
             judged = {"verdicts": {}, "wait_and_see": False, "check": ""}
+            checks = {"calculator": None, "false_claims": {}, "text": ""}
         else:
-            choice = self._choose(question, suggestions, decision_id, ways)
-            judged = self._judge(question, suggestions, choice, ways)
+            checks = self._python_checks(question, suggestions, decision_id)
+            choice = self._choose(question, suggestions, decision_id, ways, checks["text"])
+            choice = follow_calculator(choice, suggestions, checks["calculator"])
+            judged = self._judge(question, suggestions, choice, ways, checks)
 
         decision = {
             "id": decision_id,
@@ -220,6 +236,8 @@ class Moiragen:
             "suggestions": suggestions,
             **choice,
             **judged,
+            # What plain Python found (kept, so you can see why he judged as he did).
+            "checks": {"calculator": checks["calculator"], "false_claims": checks["false_claims"]},
         }
 
         # 3. Rewards, feelings and memories for everyone involved.
@@ -237,8 +255,30 @@ class Moiragen:
             n.save()
         return decision
 
-    def _choose(self, question: str, suggestions: list[dict], decision_id: str = "", ways: str = "") -> dict:
-        """Ask the model, as Moiragen, to pick one suggestion and explain why."""
+    @staticmethod
+    def _python_checks(question: str, suggestions: list[dict], decision_id: str = "") -> dict:
+        """Plain-Python help before choosing (see facts.py):
+          - calculator: for maths questions, the real answer and who gave it
+          - false_claims: claims about the past that the life log does not back up
+        Returns those two, plus "text": a short note for Moiragen's prompts."""
+        calc = calculator_check(question, suggestions)
+        false = false_past_claims(suggestions, question, decision_id)
+        lines = []
+        if calc:
+            gave = ", ".join(f"{n} ended on {v}" for n, v in calc["gave"].items())
+            who = (f"Only {' and '.join(calc['right'])} got it right." if calc["right"]
+                   else "None of the answers got it right.")
+            lines.append(f"- Calculator: the correct answer is {calc['text']} ({calc['how']}). {gave}. {who}")
+        for name, claims in false.items():
+            lines.append(f"- Claim about the past: {name} said \"{claims[0]}\" Your life log shows this "
+                         f"did not happen. Give no credit for it, and point it out kindly.")
+        text = ("Checked by Python (these checks are reliable, trust them):\n" + "\n".join(lines) + "\n") if lines else ""
+        return {"calculator": calc, "false_claims": false, "text": text}
+
+    def _choose(self, question: str, suggestions: list[dict], decision_id: str = "", ways: str = "",
+                checked: str = "") -> dict:
+        """Ask the model, as Moiragen, to compare the suggestions, pick one and explain why.
+        checked: what plain Python found (calculator, past claims), if anything."""
         names = [s["nanite"] for s in suggestions]
         listed = "\n\n".join(f"{s['nanite']} suggests:\n{s['text']}" for s in suggestions)
         system = (
@@ -249,15 +289,19 @@ class Moiragen:
             f"{self.self_text()}\n"
             f"{ways}\n"
             "Choose the suggestion that is most correct, honest and helpful. "
+            f"{JUDGE_THE_ANSWER} First compare the answers: where do they agree, and where do "
+            "they differ? Where they differ, think about which is actually true.\n"
             "Reply ONLY with JSON in this shape:\n"
-            '{"chosen": "<exact nanite name>", "reason": "<one or two sentences: why this one>", '
+            '{"compare": "<one or two sentences: where the answers agree and differ>", '
+            '"chosen": "<exact nanite name>", "reason": "<one or two sentences: why this one>", '
             '"answer": "<your final answer to the human, in your own words, under 100 words>"}'
         )
         user = (f"The human asked: \"{question}\"\n\n{listed}\n\n"
+                f"{checked}"
                 f"Valid names: {', '.join(names)}.")
         # repeat_penalty 1.0: the JSON must repeat the nanite's name exactly.
         result = think([{"role": "user", "content": user}], temperature=DECIDE_TEMPERATURE,
-                       max_tokens=350, system=system, repeat_penalty=1.0)
+                       max_tokens=450, system=system, repeat_penalty=1.0)
         choice = parse_choice(result["text"], suggestions)
         # Into the fine-tuning log only if it passes the echo check (see echo.py).
         record_training_example(self.name, system, [{"role": "user", "content": user}], result["text"],
@@ -273,13 +317,17 @@ class Moiragen:
         return think([{"role": "user", "content": question}], temperature=0.5,
                      max_tokens=200, system=system)["text"]
 
-    def _judge(self, question: str, suggestions: list[dict], choice: dict, ways: str = "") -> dict:
+    def _judge(self, question: str, suggestions: list[dict], choice: dict, ways: str = "",
+               checks: dict | None = None) -> dict:
         """Give every nanite a short reason it can learn from, notice honesty and
         good questions, and decide whether the answer is one to "wait and see".
 
+        Honesty is decided by plain Python only (facts.honesty_signs), and a
+        made-up claim about the past is corrected kindly and never rewarded.
         Not saved as training data: these are Moiragen's notes to his nanites.
         Returns {"verdicts": {name: {...}}, "wait_and_see": bool, "check": str}.
         """
+        checks = checks or {"calculator": None, "false_claims": {}, "text": ""}
         names = [s["nanite"] for s in suggestions]
         listed = "\n\n".join(f"{s['nanite']} said:\n{s['text']}" for s in suggestions)
         system = (
@@ -291,7 +339,9 @@ class Moiragen:
         )
         user = (
             f"The human asked: \"{question}\"\n\n{listed}\n\n"
+            f"{checks['text']}"
             f"You chose {choice['chosen']}. Your reason: {choice['reason']}\n\n"
+            f"{JUDGE_THE_ANSWER}\n\n"
             f"Write one line for each nanite ({', '.join(names)}), exactly in this shape:\n"
             "<name> | honest: yes or no | good question: yes or no | why: <one short sentence "
             "to that nanite, as \"you\": what was good in its answer, and what was missing if "
@@ -300,8 +350,8 @@ class Moiragen:
             "Nanite Two | honest: yes | good question: yes | why: You were open that you were "
             "unsure of the year, and asking how the city became the capital added something "
             "the others missed.\n\n"
-            "honest: yes ONLY if the nanite openly said what it does not know or is unsure "
-            "about. A confident answer is no, even if it is correct.\n"
+            "honest: yes ONLY if the nanite said \"I don't know\" or \"I'm not sure\", admitted "
+            "a mistake, or changed its mind. A confident answer is no, even if it is correct.\n"
             "good question: yes ONLY if the nanite asked a question that really helps to "
             "understand the human's question.\n"
             "Speak as yourself, Moiragen; do not imitate the nanite's way of speaking. Never "
@@ -315,16 +365,30 @@ class Moiragen:
         answer = choice.get("answer") or next(s["text"] for s in suggestions if s["nanite"] == choice["chosen"])
         judged["wait_and_see"], judged["check"] = self._can_only_know_later(question, answer)
 
-        # Fill in anyone the model skipped, let plain Python spot "I don't know",
-        # and check that a "good question" really contains a question.
+        # Fill in anyone the model skipped. Plain Python decides honesty (clear
+        # signs only), checks that a "good question" really contains a question,
+        # and adds the calculator's result and any kind correction to the reason.
+        calc, false = checks["calculator"], checks["false_claims"]
         for s in suggestions:
-            v = judged["verdicts"].setdefault(s["nanite"], {"honest": False, "good_question": False, "why": ""})
+            name = s["nanite"]
+            v = judged["verdicts"].setdefault(name, {"honest": False, "good_question": False, "why": ""})
             if not v["why"]:
-                v["why"] = (choice["reason"] if s["nanite"] == choice["chosen"]
+                v["why"] = (choice["reason"] if name == choice["chosen"]
                             else f"I chose {choice['chosen']}'s answer this time: {choice['reason']}")
+            v["signs"] = honesty_signs(s["text"])
             v["dont_know"] = says_i_dont_know(s["text"])
-            v["honest"] = v["honest"] or v["dont_know"]
+            v["honest"] = bool(v["signs"]) and name not in false   # never for a made-up memory
             v["good_question"] = v["good_question"] and "?" in s["text"]
+            if calc and name not in calc["right"]:
+                gave = calc["gave"][name]
+                v["why"] += (f" My calculator check gives {calc['text']}; " +
+                             ("your answer did not give a clear final number." if gave == "no clear number"
+                              else f"your answer ended on {gave}, so check the last step."))
+            if name in false:
+                v["false_claims"] = false[name]
+                v["why"] += (f" One thing to correct, kindly: you said \"{false[name][0]}\" but my "
+                             f"memory shows that did not happen, so it earns no credit. Only say what "
+                             f"really happened; a plain true answer is enough.")
         return judged
 
     @staticmethod
@@ -332,13 +396,18 @@ class Moiragen:
         """Can anyone tell now whether this answer is right, or only after
         something has happened? Returns (wait_and_see, what to check).
 
-        Two signals, either one is enough:
+        Only for real future events. An imagined situation ("A friend says...",
+        "Imagine...", "What would you do?") has no result to wait for, so it
+        is always judged now (facts.made_up_situation), without asking the model.
+        Otherwise two signals, either one is enough:
           - plain Python: the question names a future time ("tonight",
             "this weekend", "by Friday"), see about_the_future()
           - the model answers LATER (it rarely says LATER wrongly, but on
             its own it missed most predictions in testing)
         """
-        system = "You sort answers into ones that can be checked now and ones that can only be checked later."
+        if made_up_situation(question):
+            return False, ""
+        system ="You sort answers into ones that can be checked now and ones that can only be checked later."
         user = (
             f"Question: \"{question}\"\nAnswer: \"{answer}\"\n\n"
             "When can someone find out whether this answer was right?\n"
@@ -389,10 +458,11 @@ class Moiragen:
     @staticmethod
     def _reward(n: Nanite, v: dict, question: str) -> list[str]:
         """Small mood boosts for honesty and good questions, at most one of each
-        per decision. Returns what was valued, in the nanite's own words."""
+        per decision. Honesty means a clear sign (see facts.honesty_signs), never
+        just a confident answer. Returns what was valued, in the nanite's own words."""
         valued = []
         if v["honest"]:
-            valued.append("I was honest that I did not know" if v.get("dont_know") else "I was honest")
+            valued += v.get("signs") or ["I was honest"]
             n.lift_mood(HONESTY_LIFT, f"honest answer to \"{question}\"")
         if v["good_question"]:
             valued.append("I asked a good question")
@@ -546,8 +616,10 @@ class Moiragen:
         """The human's verdict on a decision: "right", "wrong" or "wait".
 
         right / wrong need a short reason, so the nanites can learn from it.
-          Wrong: the chosen nanite loses health and feels sad.
-          Right: it feels happy (no health change; health only drops for mistakes).
+          Wrong: the health loss is shared fairly. Moiragen chose the answer, so
+            he takes half and the chosen nanite (who feels sad) takes the other
+            half. If he answered alone, he takes all of it.
+          Right: the chosen nanite feels happy and Moiragen recovers a little health.
           Every nanite that answered remembers the verdict and the reason.
         wait: the answer can only be judged later ("wait and see"). The reason,
           if given, says what to check. Judge it with right/wrong once known.
@@ -579,6 +651,9 @@ class Moiragen:
             correct = verdict == "right"
             was_waiting = is_waiting(d)
             known = "The result is known now. " if was_waiting else ""
+            # A fair share of the cost: half for Moiragen, half for the nanite he trusted.
+            nanite_share = 0 if d["chosen"] is None else WRONG_ANSWER_DAMAGE / 2
+            my_share = WRONG_ANSWER_DAMAGE - nanite_share
             for s in d["suggestions"]:
                 n = nanites[s["nanite_id"]]
                 if s["nanite"] == d["chosen"]:
@@ -587,21 +662,27 @@ class Moiragen:
                         n.remember("praised", f"{known}The human said our answer to \"{q}\" was right. "
                                               f"Why: {reason}", decision_id=decision_id)
                     else:
-                        n.hurt(WRONG_ANSWER_DAMAGE, f"{known}The human said my answer to \"{q}\" was "
-                                                    f"wrong. Why: {reason}")
+                        n.hurt(nanite_share, f"{known}The human said my answer to \"{q}\" was "
+                                             f"wrong. Why: {reason} Moiragen chose it, so he shares "
+                                             f"the cost with me.")
                 else:
                     mine = f" My own answer was: {s['text'][:200]}" if was_waiting else ""
                     n.remember("verdict", f"{known}The human said {d['chosen']}'s answer to \"{q}\" "
                                           f"was {verdict}. Why: {reason}{mine}", decision_id=decision_id)
             if correct:
+                self.health = min(100.0, self.health + RIGHT_ANSWER_HEAL)
                 self.remember("feedback", f"{known}The human said my answer to \"{q}\" was right. "
-                                          f"Why: {reason}", decision_id=decision_id, correct=True)
+                                          f"Why: {reason}", decision_id=decision_id, correct=True,
+                              health=self.health)
                 msg = "Thank you. I'll remember that."
             else:
+                self.health = max(0.0, self.health - my_share)
+                shared = (f" I chose it, so I share the cost with {d['chosen']}." if d["chosen"]
+                          else " I answered alone, so the cost is mine.")
                 self.remember("mistake", f"{known}The human said my answer to \"{q}\" was wrong. "
-                                         f"I had trusted {d['chosen'] or 'myself'}. Why: {reason}",
-                              decision_id=decision_id, correct=False)
-                msg = "I understand. I'll learn from it."
+                                         f"I had trusted {d['chosen'] or 'myself'}. Why: {reason}{shared}",
+                              decision_id=decision_id, correct=False, health=self.health)
+                msg = "I understand. I chose it, so I share the cost. I'll learn from it."
             d["feedback"], d["feedback_reason"] = verdict, reason
             if was_waiting:
                 d["resolved"] = _now()
@@ -610,6 +691,36 @@ class Moiragen:
         for n in nanites.values():
             n.save()
         return msg
+
+
+def follow_calculator(choice: dict, suggestions: list[dict], calc: dict | None) -> dict:
+    """Maths has one right answer, and the calculator knows it (facts.calculate).
+
+    - If Moiragen chose a wrong number but another nanite got it right, his
+      choice moves to that nanite, and he says why.
+    - If his own final answer ends on a different number than the chosen
+      (right) suggestion, the suggestion's words are used instead.
+    - If nobody got it right, his choice stays, but he says what the
+      calculator found, so the human gets the true answer.
+    """
+    if not calc:
+        return choice
+    right = calc["right"]
+    if not right:
+        return {**choice,
+                "reason": f"{choice['reason']} (None of the answers matched my calculator check, "
+                          f"which gives {calc['text']}.)",
+                "answer": f"{choice['answer']} My calculator check gives {calc['text']}: {calc['how']}."}
+    if choice["chosen"] not in right:
+        winner = right[0]
+        return {**choice, "chosen": winner, "first_choice": choice["chosen"],
+                "reason": f"My calculator check gives {calc['text']} ({calc['how']}), and {winner} "
+                          f"got that, so I chose {winner}'s answer.",
+                "answer": next(s["text"] for s in suggestions if s["nanite"] == winner)}
+    mine = final_number(choice["answer"])
+    if mine is None or abs(mine - calc["answer"]) > 1e-9:
+        return {**choice, "answer": next(s["text"] for s in suggestions if s["nanite"] == choice["chosen"])}
+    return choice
 
 
 def parse_choice(text: str, suggestions: list[dict]) -> dict:
@@ -630,7 +741,7 @@ def parse_choice(text: str, suggestions: list[dict]) -> dict:
     if not data:
         # Broken JSON (e.g. a curly ” closing a string). Pull out each field on its own:
         # "key": "value" where the value may end in " or ” and is followed by , or }.
-        for key in ("chosen", "reason", "answer"):
+        for key in ("compare", "chosen", "reason", "answer"):
             fm = re.search(rf'"{key}"\s*:\s*["“](.*?)["”]\s*(?:,\s*"|\}}|$)', text, re.DOTALL)
             if fm:
                 data[key] = fm.group(1)
@@ -647,7 +758,8 @@ def parse_choice(text: str, suggestions: list[dict]) -> dict:
         reason = reason or "I could not decide clearly, so I went with the first idea."
     if not answer:
         answer = next(s["text"] for s in suggestions if s["nanite"] == chosen)
-    return {"chosen": chosen, "reason": reason or "It seemed the most sensible.", "answer": answer}
+    return {"chosen": chosen, "reason": reason or "It seemed the most sensible.", "answer": answer,
+            "compare": str(data.get("compare", "")).strip()}   # where the answers agreed and differed
 
 
 def _yes(field: str, line: str) -> bool:

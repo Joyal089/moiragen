@@ -93,12 +93,13 @@ assert all(v[n.name]["why"] for n in nanites.values()), "every nanite gets a rea
 # Two: honest "I don't know" (found by plain Python) + a real question -> two boosts.
 assert v["Nanite Two"]["dont_know"] and v["Nanite Two"]["honest"] and v["Nanite Two"]["good_question"]
 assert v["Nanite Two"]["rewards"] == ["I was honest that I did not know", "I asked a good question"]
-# Three: honest, but "good question" without a "?" is not believed.
-assert v["Nanite Three"]["honest"] and not v["Nanite Three"]["good_question"]
+# Three: the model said honest and good question, but a confident answer has no clear
+# sign of honesty (v1.3: Python decides), and a "good question" needs a "?".
+assert not v["Nanite Three"]["honest"] and not v["Nanite Three"]["good_question"]
 assert v["Nanite One"]["rewards"] == []
 feelings_cost = 10 * (mother_mod.DISAPPOINTED_WHEN_NOT + mother_mod.LEFT_OUT_WHEN_NOT)
 assert round(two.mood - moods["nanite_two"], 2) == round(HONESTY_LIFT + QUESTION_LIFT - feelings_cost, 2)
-assert round(three.mood - moods["nanite_three"], 2) == round(HONESTY_LIFT - feelings_cost, 2)
+assert round(three.mood - moods["nanite_three"], 2) == round(-feelings_cost, 2)
 assert all(n.health == healths[nid] for nid, n in nanites.items()), "judging never costs health"
 assert one.memories[-1]["kind"] == "chosen" and "Why: You saw the pattern" in one.memories[-1]["text"]
 assert two.memories[-1]["kind"] == "not_chosen" and "What he told me: Your question" in two.memories[-1]["text"]
@@ -218,7 +219,7 @@ assert w["wait_and_see"] and w["check"] == "whether it rains on Saturday"
 assert all(n.emotions["happy"] == 0 and n.emotions["disappointed"] == 0 for n in nanites.values()), \
     "nobody feels chosen or left out before the result is known"
 assert all(n.memories[-1]["kind"] == "wait_and_see" for n in nanites.values())
-assert w["verdicts"]["Nanite Two"]["rewards"] == ["I was honest"]
+assert w["verdicts"]["Nanite Two"]["rewards"] == ["I was honest that I did not know"]
 assert social.after_decision(w, nanites, m, random.Random(1)) == [], "no one asks why: nobody lost yet"
 assert [x["id"] for x in m.waiting()] == [w["id"]]
 try:
