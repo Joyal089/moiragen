@@ -221,6 +221,9 @@ def normal_verdict(verdict: str) -> str:
 # Moiragen says anyway, he is shown them with a gentle note and rewrites them once
 # (see Moiragen.fairer); only if the rewrite is still dismissive is the sentence taken out.
 FAIRER_NOTE = "This dismisses a way of seeing. Can you say it more fairly?"
+# Said when nothing fair is left of what he wanted to say (v1.9).
+GENTLE_FALLBACK = "I chose another answer this time, and I value your own way of seeing."
+GENTLE_CHOSEN = "I chose your answer this time, and I value your own way of seeing."
 DISMISSIVE = re.compile(
     r"\b(?:too|overly|excessively|unnecessarily|somewhat|rather|a bit) (?:reflective|emotional|subjective|"
     r"introspective|philosophical|abstract|rigid|vague|poetic|detached|analytical|technical|clinical|"
@@ -240,6 +243,13 @@ DISMISSIVE = re.compile(
     # "overly reliant", "felt somewhat… static", "it presented a distance")
     r"|\b(?:lean|leans|leaned|leaning|rel(?:y|ies|ied|ying))\W+(?:(?:a little|a bit|a touch|slightly|"
     r"somewhat|rather|quite|perhaps|maybe|just|far|much)\W+)?(?:too\W+)?heavily\b"
+    # v1.9: "too much" with any softener ("leaned a little too much into", "put too much weight on")
+    # and "reductive" ("Your answer was too reductive")
+    r"|\b(?:lean|leans|leaned|leaning|rel(?:y|ies|ied|ying)|focus(?:ed|es|ing)?|dwell(?:s|ed|ing)?|"
+    r"emphasi[sz]\w*|put|puts|placed|places|went|goes|go)\W+(?:(?:a little|a bit|a touch|slightly|somewhat|"
+    r"rather|quite|perhaps|maybe|just|far|much|way)\W+)?too\W+much\b"
+    r"|\btoo much (?:emphasis|focus|weight|attention|stress)\b"
+    r"|\b(?:reductive|reductionist\w*|over-?simplif\w*)\b"
     r"|\b(?:too|overly|heavily|excessively) reliant\b|\bover-?(?:rel(?:y|ies|ied|iance)|emphasi[sz]\w*)\b"
     r"|\b(?:too|overly|excessively|unnecessarily|somewhat|rather|a bit|a little)\W{1,4}"
     r"(?:static|stiff|dry|cold|distant|reflective|emotional|subjective|abstract|detached|analytical|"
@@ -255,7 +265,10 @@ TOWARD_MEASURING = re.compile(
 # "Perhaps I was too rigid") is honest self-reflection, not pushing a nanite (v1.7).
 ABOUT_MYSELF = re.compile(r"^\W*(?:and |but |so )?(?:perhaps |maybe |honestly,? |i think )?(?:I|my|I'm|I’m)\b",
                           re.IGNORECASE)
-TO_THEM = re.compile(r"\byour?\b", re.IGNORECASE)
+# "you"/"your", or (v1.9) the other answers or nanites: "I chose this one: the other
+# answers lean too heavily on data" starts with "I" but is about them, not himself.
+TO_THEM = re.compile(r"\byour?\b|\bthe others\b|\bother (?:answers?|nanites?|ones)\b|\banswer [a-h]\b"
+                     r"|\bnanite (?:one|two|three)\b", re.IGNORECASE)
 # "as you said", "thank you", "the feeling you describe": still about himself.
 NOT_TO_THEM = re.compile(r"\bas you\b[^,.;!?]*|\bthank you\b|\byou(?:'ve|’ve| have) (?:shown|helped) me\b"
                          r"|\byou (?:so \w+ )?(?:describe|described|said|mentioned|felt|feel|see|saw|noticed|"
@@ -330,6 +343,10 @@ def asks_a_question(text: str) -> bool:
 # v1.8: Moiragen may only praise or criticise what a nanite actually wrote.
 # "You suggested X", "your focus on X", "you felt X" and anything he quotes are
 # checked against the nanite's own words (plain Python, word stems).
+# v1.9: judged by KEY WORDS, so his paraphrase of a nanite's real idea counts as
+# true ("validating the human's emotional experience" for "validate their feeling").
+# General words ("importance", "element", "human") are not key words, and a key
+# word also counts as found when the nanite used a word of the same meaning.
 SAID_BY_YOU = re.compile(
     r"\byou\s+(?:\w+ly\s+)?(?:suggested|mentioned|said|described|noted|proposed|felt|explored|highlighted|"
     r"emphasi[sz]ed|wrote|observed|noticed|identified|raised|pointed out|focused on|talked about|asked about|"
@@ -341,23 +358,66 @@ SAID_BY_YOU = re.compile(
 QUOTED_BY_HIM = re.compile(r"\"([^\"]{2,120})\"|“([^”]{2,120})”|(?<!\w)'([^']{2,80})'(?!\w)")
 CLAIM_WORDS = 8           # the first words after "you suggested ..." are what is claimed
 # ...up to where his own opinion of it starts ("...an evolutionary adaptation | was valuable").
-CLAIM_ENDS = re.compile(r"\b(?:was|is|were|are|seemed|seems|felt|feels|showed|shows|gave|gives|added|adds|"
+CLAIM_ENDS = re.compile(r",|\b(?:was|is|were|are|seemed|seems|felt|feels|showed|shows|gave|gives|added|adds|"
                         r"made|makes|helped|helps|offered|brought|struck|demonstrated|reflects|reflected|"
-                        r"resonated|resonates|but|while|which|really|truly|beautifully|well)\b", re.IGNORECASE)
+                        r"resonated|resonates|but|while|which|really|truly|beautifully|well|overlooked|missed|"
+                        r"lacked|ignored|obscured|failed|didn't|didn’t)\b", re.IGNORECASE)
+# Words too general to show what a nanite said (v1.9).
+GENERIC = set("""importance important value valuable element elements aspect aspects approach nature sense
+way ways idea ideas concept concepts understanding perspective perspectives point points focus role part
+kind sort crucial core simple deeper underlying fundamental potential process situation answer response
+question need needs desire human humans person people someone thing things context level degree inherent
+overall specific particular several various certain careful carefully remarkably fully clear clearly whole
+entire basic essential key central real mere merely own correctly rightly regarding within itself themselves
+insight insights action actions indicator indicators sign signs factor factors detail details
+abstract thorough technical practical nuanced thoughtful insightful subtle gentle deep rich accurate precise
+mature balanced""".split())   # the last two lines: containers ("indicators") and his own opinion words
+# Small families of words that mean nearly the same (v1.9). A key word counts as
+# found if the nanite used it, or any word of its family.
+FAMILIES = [
+    "feel feeling feelings felt emotion emotional emotions empathy empathetic care caring compassion comfort "
+    "comforting sad sadness distress upset hurt warmth kindness sorrow sympathy support supportive",
+    "ongoing consistent consistently constant continuous continual steady recurrent recurring regular repeated "
+    "persistent",
+    "connection connect connected bond relationship together shared sharing share mutual collaboration "
+    "collaborative cooperation cooperate exchange teamwork",
+    "help helping assist assistance support supporting supportive repair repairing fix fixing restore restoration "
+    "listen listening hear hearing",
+    "analysis analyze analyse analytical analyzing analysing logical logic objective assess assessment examine "
+    "investigate investigation data",
+    "pattern patterns structure structural framework system systems order",
+    "change changes changing shift shifting fluctuation fluctuations variation",
+    "measure measurable measurement metric metrics quantify quantifiable numbers",
+]
+_FAMILY_OF = {}
+for _family in FAMILIES:
+    _stems = {w[:5] for w in _family.split()}
+    for _stem in _stems:
+        _FAMILY_OF.setdefault(_stem, set()).update(_stems)
 
 
 def _key_words(text: str) -> list[str]:
-    return [w for w in plain_words(text) if w not in ECHO_COMMON and len(w) >= 3]
+    """The words that show what was claimed: not small words ("the", "you") and not
+    general ones ("importance", "element"). "human's" counts as "human"."""
+    out = []
+    for w in plain_words(text):
+        w = w[:-2] if w.endswith("'s") else w
+        if w not in ECHO_COMMON and w not in GENERIC and len(w) >= 3:
+            out.append(w)
+    return out
 
 
 def _found_in(word: str, source: str) -> bool:
     """Is the word (or its first five letters: "falling" for "fall", "discomfort" for
-    "comfort") in the source text?"""
-    return word[:5] in source
+    "comfort"), or a word of the same meaning (see FAMILIES), in the source text?"""
+    stem = word[:5]
+    return any(s in source for s in _FAMILY_OF.get(stem, {stem}))
 
 
 def invented_about(sentence: str, theirs: str, also: str = "") -> str | None:
     """The part of one sentence that claims something the nanite never wrote, or None.
+    A claim ("you suggested X") counts as true when more than half of its key words
+    are in the nanite's own words (or mean the same), so a paraphrase is fine.
     theirs: the nanite's own words (and the human's question);
     also:   other texts he may quote (e.g. the chosen answer)."""
     mine = " ".join(plain_words(theirs))
@@ -523,17 +583,26 @@ class Moiragen:
         if rewrite and not PUSHY.search(rewrite):
             outcome, final = "rewritten", rewrite
         else:                                      # still dismissive: the last resort
-            outcome, final = "removed", soften(rewrite or text, fallback) or fallback
+            outcome, final = "removed", soften(rewrite or text) or self.fair_fallback(fallback, to)
         log_event("fairer_words", self.name, to=self._real_name(to), phrase=found.group(0), original=text,
                   rewrite=rewrite, outcome=outcome, final=final)
         return final
+
+    def fair_fallback(self, text: str, to: str, gentle: str = GENTLE_FALLBACK) -> str:
+        """v1.9: a fallback (often his reason for the choice, said when his own words to a
+        nanite were removed) goes through the same fairness check, so "the other answers
+        lean too heavily on…" never slips through that way. gentle: what is left if
+        nothing fair remains (GENTLE_CHOSEN for the nanite he chose)."""
+        if not text or not PUSHY.search(text):
+            return text
+        return self.fairer(text, to, gentle) or gentle
 
     def _real_name(self, to: str) -> str:
         """While judging blind he speaks to "Answer B"; the journal names the real nanite (v1.8)."""
         return getattr(self, "_blind_names", {}).get(to, to)
 
     def only_what_they_said(self, text: str, to: str, theirs: str, also: str = "",
-                            fallback: str = "") -> str:
+                            fallback: str = "", gentle: str = GENTLE_FALLBACK) -> str:
         """v1.8: he may only praise or criticise what the nanite actually wrote. A
         sentence that says "you suggested X" or quotes words the nanite never wrote is
         taken out (plain Python, see invented_about); logged so it shows in the journal.
@@ -545,7 +614,7 @@ class Moiragen:
             (removed if found else kept).append((s, found))
         if not removed:
             return text
-        final = " ".join(s for s, _ in kept).strip() or fallback
+        final = " ".join(s for s, _ in kept).strip() or self.fair_fallback(fallback, to, gentle)
         log_event("invented_feedback", self.name, to=self._real_name(to), phrases=[f for _, f in removed],
                   removed=[s for s, _ in removed], original=text, final=final)
         return final
@@ -880,14 +949,18 @@ class Moiragen:
         # signs only), checks that a "good question" really contains a question,
         # and adds the calculator's result and any kind correction to the reason.
         calc, false = checks["calculator"], checks["false_claims"]
+        every_answer = "\n".join(own_words(s["text"]) for s in suggestions)   # he may quote any of them
         for s in suggestions:
             name = s["nanite"]
             v = judged["verdicts"].setdefault(name, {"honest": False, "good_question": False, "why": ""})
             fallback = (choice["reason"] if name == choice["chosen"]
                         else f"I chose {choice['chosen']}'s answer this time: {choice['reason']}")
-            v["why"] = self.fairer(v["why"], name, fallback) or fallback   # never "too reflective"
+            # Never "too reflective", and nothing invented; a fallback is checked for fairness too (v1.9).
+            gentle = GENTLE_CHOSEN if name == choice["chosen"] else GENTLE_FALLBACK
+            v["why"] = self.fairer(v["why"], name) or self.fair_fallback(fallback, name, gentle)
             v["why"] = self.only_what_they_said(v["why"], name, f"{own_words(s['text'])}\n{question}",
-                                                fallback=fallback) or fallback   # nothing invented
+                                                also=every_answer, fallback=fallback, gentle=gentle) \
+                or self.fair_fallback(fallback, name, gentle)
             if name in choice.get("why_not_others", {}):         # chosen 3 times in a row: say why not this one
                 v["why"] += (f" I have chosen {choice['chosen']} {choice['streak']} times in a row, so "
                              f"here is why not yours this time: {choice['why_not_others'][name]}")
@@ -972,15 +1045,16 @@ class Moiragen:
             v["label"] = SITUATION_VERDICTS[v["verdict"]]
             v["thoughtful"] = v["verdict"] == "thoughtful"
 
-            good = v.pop("good") or f"You thought about what to do, in your own way."
-            add = v.pop("add")
-            why = f"What was good in your reasoning: {good}"
-            if add:
-                why += f" Something to add: {add}"
-            plain = "What was good in your reasoning: you thought about what to do, in your own way."
-            v["why"] = self.fairer(why, name, f"What was good in your reasoning: {good}") or plain
-            v["why"] = self.only_what_they_said(v["why"], name, f"{own_words(s['text'])}\n{question}",
-                                                fallback=plain) or plain   # nothing invented
+            # "good" and "add" are checked apart (fair words, nothing invented), so every
+            # nanite always hears something good, even if one of his sentences is removed (v1.9).
+            plain_good = "You thought about what to do, in your own way."
+            theirs = f"{own_words(s['text'])}\n{question}"
+            good = v.pop("good") or plain_good
+            good = self.only_what_they_said(self.fairer(good, name, plain_good) or plain_good,
+                                            name, theirs, fallback=plain_good) or plain_good
+            add = self.fairer(v.pop("add"), name, "")
+            add = self.only_what_they_said(add, name, theirs, fallback="") if add else ""
+            v["why"] = f"What was good in your reasoning: {good}" + (f" Something to add: {add}" if add else "")
             if name in choice.get("why_not_others", {}):     # chosen 3 times in a row
                 v["why"] += (f" I have chosen {choice['chosen']} {choice['streak']} times in a row, so "
                              f"here is why not yours this time: {choice['why_not_others'][name]}")
@@ -1123,8 +1197,9 @@ class Moiragen:
                                                also=winner, fallback=plain)
         # A clear verdict: "you're right" without changing the choice must say why not.
         if AGREES.search(explanation):
-            explanation += (f" You made a good point, but I still chose {decision['chosen']}'s answer "
-                            f"this time, because: {decision['reason']}")
+            explanation += " " + self.fair_fallback(f"You made a good point, but I still chose "
+                                                    f"{decision['chosen']}'s answer this time, because: "
+                                                    f"{decision['reason']}", asker)
         self.remember("explained", f"{asker} asked why I chose {decision['chosen']}. I said: {explanation}",
                       decision_id=decision["id"])
         self.save()
