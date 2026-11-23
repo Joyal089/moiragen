@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from moiragen import facts, mind as mind_mod, mother as mother_mod, social
 from moiragen.loop import Mind
-from moiragen.memory_log import log_event
+from moiragen.memory_log import log_event, read_events
 from moiragen.mother import VALUE_ALL_WAYS, Moiragen, counts_from_log, soften
 from moiragen.nanite import load_all
 
@@ -85,13 +85,15 @@ one, two, three = nanites["nanite_one"], nanites["nanite_two"], nanites["nanite_
 ANSWERS = ["Patterns repeat in it.", "It changes over time.", "It feels gentle to me."]
 
 
-def ask(question, chosen, judge_lines=None, extra=()):
+def ask(question, chosen, judge_lines=None, extra=(), after=()):
+    """extra: replies between choosing and judging (the streak explanation);
+    after: replies after the NOW/LATER question (his rewrites of dismissive words)."""
     judge = judge_lines or "\n".join(f"Nanite {w} | honest: no | good question: no | why: Thank you."
                                      for w in ("One", "Two", "Three"))
     with patch.object(mind_mod, "think", nanite_brain), patch.object(mother_mod, "think", moiragen_brain):
         nanite_brain.script[:] = list(ANSWERS)
         moiragen_brain.script[:] = ['{"compare": "c", "chosen": "%s", "reason": "Clear.", "answer": "a"}' % chosen,
-                                    *extra, judge, "NOW"]
+                                    *extra, judge, "NOW", *after]
         d = m.decide(question, nanites)
         assert not moiragen_brain.script, f"unused replies: {moiragen_brain.script}"
     return d
@@ -101,15 +103,31 @@ TOO = ("Nanite One | honest: no | good question: no | why: You saw the pattern.\
        "Nanite Two | honest: no | good question: no | why: Clear about time.\n"
        "Nanite Three | honest: no | good question: no | why: Your answer was too reflective. "
        "You noticed how it feels.")
-d1 = ask("What is a river?", "Nanite Two", TOO)
-assert "too reflective" not in d1["verdicts"]["Nanite Three"]["why"]
-assert d1["verdicts"]["Nanite Three"]["why"] == "You noticed how it feels."
-assert "too reflective" not in three.memories[-1]["text"]
-assert VALUE_ALL_WAYS in moiragen_brain.calls[-3]["system"] and VALUE_ALL_WAYS in moiragen_brain.calls[-2]["system"]
-assert "How often you have chosen each nanite so far" in moiragen_brain.calls[-3]["system"]
+FAIR = "You stayed close to how a river feels, and that is a real way of seeing it. You noticed how it feels."
+d1 = ask("What is a river?", "Nanite Two", TOO, after=[FAIR])
+rewrite_call = moiragen_brain.calls[-1]["messages"][0]["content"]
+assert "Your answer was too reflective" in rewrite_call and mother_mod.FAIRER_NOTE in rewrite_call, \
+    "he is shown his own words with the gentle note"
+assert d1["verdicts"]["Nanite Three"]["why"] == FAIR, "his fairer rewrite is what Three hears"
+assert "too reflective" not in three.memories[-1]["text"] and FAIR in three.memories[-1]["text"]
+assert VALUE_ALL_WAYS in moiragen_brain.calls[0]["system"] and VALUE_ALL_WAYS in moiragen_brain.calls[1]["system"]
+assert "How often you have chosen each nanite so far" in moiragen_brain.calls[0]["system"]
+# If the rewrite is still dismissive, only then is the sentence removed.
+moiragen_brain.calls.clear()
+with patch.object(mother_mod, "think", moiragen_brain):
+    moiragen_brain.script[:] = ["That was overly emotional. Still, you noticed the quiet."]
+    kept = m.fairer("Your view is too subjective. You noticed the quiet.", "Nanite Three", "Thank you.")
+assert kept == "Still, you noticed the quiet."
 assert soften("Subjective experience is inherently unreliable. Keep noticing.") == "Keep noticing."
-print("[ok] All three ways valued in his prompts; \"too reflective\" never reaches a nanite")
+journal_lines = [e for e in read_events(kind="fairer_words", last=10)]
+assert [e["outcome"] for e in journal_lines] == ["rewritten", "removed"]
+from moiragen.journal import render
+assert "Gentle note on \"too reflective\"" in render(journal_lines[0]) and "he rewrote it" in render(journal_lines[0])
+assert "still dismissive" in render(journal_lines[1])
+print(f"[ok] Dismissive words: shown back with a gentle note and rewritten once (\"{FAIR[:50]}...\"); "
+      f"removed only if still dismissive; each case is in the journal")
 
+moiragen_brain.calls.clear()
 d2 = ask("What is a cloud?", "Nanite Two")
 assert m.chosen_counts == {"Nanite Two": 2} and m.streak() == ("Nanite Two", 2)
 WHY_NOT = ("Nanite One: Its pattern was true, but it did not say what a cloud is made of.\n"

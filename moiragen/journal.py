@@ -66,6 +66,12 @@ def render(e: dict) -> str | None:
         return f"- {at} **Moiragen changed his choice** to {e.get('chosen')}: {clean(e.get('why'))}"
     if k in ("feedback", "mistake") and who == "Moiragen":
         return f"- {at} **Verdict:** {clean(e.get('text'))}"
+    if k == "fairer_words":
+        done = (f"he rewrote it: \"{clean(e.get('rewrite'))}\"" if e.get("outcome") == "rewritten"
+                else f"his rewrite was still dismissive (\"{clean(e.get('rewrite'))}\"), so that sentence "
+                     f"was removed. What {e.get('to')} heard: \"{clean(e.get('final'))}\"")
+        return (f"- {at} **Fairer words:** Moiragen was about to tell {e.get('to')} \"{clean(e.get('original'))}\". "
+                f"Gentle note on \"{e.get('phrase')}\": this dismisses a way of seeing. Then {done}")
     if k == "correction":
         return f"- {at} **Correction ({who}):** {clean(e.get('text'))}"
     if k == "lesson" and not str(e.get("source", "")).startswith("decision"):

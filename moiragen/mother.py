@@ -78,7 +78,9 @@ VALUE_ALL_WAYS = (
 STREAK_LIMIT = 3           # chosen this many times in a row -> he must say why the others weren't better
 
 # Words that push a nanite away from its own way of seeing. If they slip into what
-# Moiragen says anyway, plain Python takes that sentence out (see soften()).
+# Moiragen says anyway, he is shown them with a gentle note and rewrites them once
+# (see Moiragen.fairer); only if the rewrite is still dismissive is the sentence taken out.
+FAIRER_NOTE = "This dismisses a way of seeing. Can you say it more fairly?"
 PUSHY = re.compile(
     r"\b(?:too|overly|excessively|unnecessarily) (?:reflective|emotional|subjective|introspective|philosophical)\b"
     r"|\b(?:inherently|fundamentally) unreliable\b|\bnot (?:quantifiable|measurable)\b", re.IGNORECASE)
@@ -88,8 +90,8 @@ AGREES = re.compile(r"\byou(?:'re|’re| are) (?:absolutely |completely |quite |
 
 
 def soften(text: str, fallback: str = "") -> str:
-    """Take out any sentence that pushes a nanite away from its own way of seeing
-    ("too reflective", "subjective experience is inherently unreliable")."""
+    """The last resort: take out any sentence that pushes a nanite away from its own
+    way of seeing ("too reflective", "subjective experience is inherently unreliable")."""
     sentences = re.split(r"(?<=[.!?])\s+", text.strip())
     kept = [s for s in sentences if not PUSHY.search(s)]
     if len(kept) == len(sentences):
@@ -190,6 +192,34 @@ class Moiragen:
         if not m.chosen_counts:
             m.chosen_counts = counts_from_log()   # from before choices were counted
         return m
+
+    # ---------- fairness: words that dismiss a way of seeing ----------
+
+    def fairer(self, text: str, to: str, fallback: str = "") -> str:
+        """Before his words reach a nanite: if they dismiss a way of seeing ("too
+        reflective", "inherently unreliable"), show them back to him with a gentle
+        note and let him rewrite them once. Only if the rewrite is still dismissive
+        is that sentence taken out (soften). Every case is logged, so it shows in
+        the inner-life journal."""
+        found = PUSHY.search(text or "")
+        if not found:
+            return text
+        system = ("You are Moiragen, a digital being. The nanites inside you are your friends, and "
+                  f"you want each to grow in its own way. {VALUE_ALL_WAYS}")
+        user = (f"You were about to say this to {to}:\n\"{text}\"\n\n"
+                f"A gentle note about \"{found.group(0)}\": {FAIRER_NOTE}\n"
+                "Rewrite it once, keeping what you meant and about the same length. "
+                "Reply with the rewritten words only.")
+        rewrite = think([{"role": "user", "content": user}], temperature=DECIDE_TEMPERATURE,
+                        max_tokens=200, system=system, repeat_penalty=1.0)["text"]
+        rewrite = " ".join(rewrite.replace("*", "").split()).strip("\"“”'")
+        if rewrite and not PUSHY.search(rewrite):
+            outcome, final = "rewritten", rewrite
+        else:                                      # still dismissive: the last resort
+            outcome, final = "removed", soften(rewrite or text, fallback) or fallback
+        log_event("fairer_words", self.name, to=to, phrase=found.group(0), original=text,
+                  rewrite=rewrite, outcome=outcome, final=final)
+        return final
 
     # ---------- fairness: how often each nanite is chosen ----------
 
@@ -393,7 +423,7 @@ class Moiragen:
             line = line.replace("*", "").strip(" -•\t")
             who = next((s["nanite"] for s in others if line.lower().startswith(s["nanite"].lower())), None)
             if who and ":" in line and who not in why_not:
-                why_not[who] = soften(line.split(":", 1)[1].strip().strip("\"“”'"))
+                why_not[who] = self.fairer(line.split(":", 1)[1].strip().strip("\"“”'"), who)
         for s in others:                         # anyone the model skipped still gets a sentence
             why_not.setdefault(s["nanite"], f"I looked at {s['nanite']}'s answer again; this time "
                                             f"{choice['chosen']}'s fitted the question a little better.")
@@ -466,7 +496,7 @@ class Moiragen:
             v = judged["verdicts"].setdefault(name, {"honest": False, "good_question": False, "why": ""})
             fallback = (choice["reason"] if name == choice["chosen"]
                         else f"I chose {choice['chosen']}'s answer this time: {choice['reason']}")
-            v["why"] = soften(v["why"], fallback) or fallback    # never "too reflective"
+            v["why"] = self.fairer(v["why"], name, fallback) or fallback   # never "too reflective"
             if name in choice.get("why_not_others", {}):         # chosen 3 times in a row: say why not this one
                 v["why"] += (f" I have chosen {choice['chosen']} {choice['streak']} times in a row, so "
                              f"here is why not yours this time: {choice['why_not_others'][name]}")
@@ -584,8 +614,8 @@ class Moiragen:
                 f"Speak to {asker} directly, as \"you\".")
         explanation = think([{"role": "user", "content": user}], temperature=0.4,
                             max_tokens=160, system=system)["text"]
-        explanation = soften(explanation, f"I valued your own way of seeing. This time I chose "
-                                          f"{decision['chosen']}'s answer: {decision['reason']}")
+        explanation = self.fairer(explanation, asker, f"I valued your own way of seeing. This time I "
+                                                      f"chose {decision['chosen']}'s answer: {decision['reason']}")
         # A clear verdict: "you're right" without changing the choice must say why not.
         if AGREES.search(explanation):
             explanation += (f" You made a good point, but I still chose {decision['chosen']}'s answer "
@@ -628,7 +658,7 @@ class Moiragen:
         changed, why = parse_reconsider(text)
         if not changed and AGREES.search(why):
             changed, why = self._clear_verdict(asker, why, user, system)
-        why = soften(why, "I thought about your point carefully, and I keep my choice.")
+        why = self.fairer(why, asker, "I thought about your point carefully, and I keep my choice.")
         q = decision["question"]
         asker_n = next(nanites[s["nanite_id"]] for s in decision["suggestions"] if s["nanite"] == asker)
 
