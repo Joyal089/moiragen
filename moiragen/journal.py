@@ -62,6 +62,7 @@ def render(e: dict) -> str | None:
         return f"\n#### {at} Moiragen's story\n\n{e.get('text', '')}\n"
     if k == "decision_full":
         return _render_decision(e, at)
+    # (a "pattern" event is written inside its decision above, after the names are revealed)
     if k == "choice_changed":
         return f"- {at} **Moiragen changed his choice** to {e.get('chosen')}: {clean(e.get('why'))}"
     if k in ("feedback", "mistake") and who == "Moiragen":
@@ -109,8 +110,13 @@ def _render_decision(e: dict, at: str) -> str:
     lines.append(f"- **Moiragen chose {e.get('chosen')}**{first}: {clean(e.get('reason'))}")
     if e.get("wait_and_see"):
         lines.append(f"- Wait and see: {clean(e.get('check'))}")
-    lines.append(f"- **Moiragen's answer:** {clean(e.get('answer'))}\n")
-    return "\n".join(lines)
+    lines.append(f"- **Moiragen's answer:** {clean(e.get('answer'))}")
+    if e.get("blind"):           # v1.6: he judged blind; the names came back afterwards
+        seen = ", ".join(f"{label} was {name}" for label, name in sorted(e["blind"].items()))
+        lines.append(f"- Judged blind, names revealed afterwards: {seen}")
+    if e.get("pattern"):
+        lines.append(f"- *Moiragen looks at his own pattern:* {clean(e['pattern'])}")
+    return "\n".join(lines) + "\n"
 
 
 class Journal:

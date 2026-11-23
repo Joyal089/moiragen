@@ -5,6 +5,10 @@ How one decision works:
   2. Each nanite that has the energy suggests an answer.
   3. Moiragen reads all suggestions, picks the one he trusts most, and
      explains why. He then gives his final answer in his own words.
+     He judges blind (v1.6): the answers are shuffled and labelled Answer A,
+     B, C, with the nanites' names hidden. The names are revealed only after
+     he has chosen and judged, and then he looks briefly at his own pattern
+     ("I chose Two again. Why do I lean that way?").
      Before he chooses, plain Python checks a few things for him (facts.py):
      a calculator for maths questions, and whether any claim about the past
      ("I was chosen for this before") is really in the life log. He judges
@@ -36,13 +40,14 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 import json
 import os
+import random
 import re
 import uuid
 
 from .config import MEMORY_DIR
 from .echo import record_training_example
-from .facts import (I_DONT_KNOW, calculator_check, false_past_claims, final_number,
-                    honesty_signs, made_up_situation, situational)
+from .facts import (I_DONT_KNOW, about_wish_or_feeling, calculator_check, false_past_claims,
+                    final_number, honesty_signs, made_up_situation, situational)
 from .llm import think
 from .memory_log import log_event, read_events
 from .mind import nanite_think
@@ -90,6 +95,97 @@ SITUATION_CHOOSE = (
     "feelings and most practical.")
 
 
+# --- Blind judging (v1.6) ---
+BLIND_JUDGING = True       # tests of other rules may turn it off, to script replies by name
+# A nanite's name inside an answer ("Nanite Two suggests...", "Three, you...") would
+# give away who wrote it, so Moiragen sees "another nanite" instead.
+NAMES_IN_TEXT = re.compile(r"\bNanite (?:One|Two|Three)\b|\b(?:One|Two|Three)(?=,)")
+
+
+def hide_names(text: str) -> str:
+    return NAMES_IN_TEXT.sub("another nanite", text)
+
+
+class Blind:
+    """Moiragen judges the answers, not the speakers: he sees them shuffled and
+    labelled "Answer A", "Answer B", "Answer C", with the names hidden.
+
+        blind = Blind(suggestions)
+        blind.suggestions        what he sees (label in place of the name)
+        blind.checks(checks)     Python's checks, with labels in place of names
+        blind.reveal(choice, judged, checks)   back to the real names, after judging
+    """
+
+    def __init__(self, suggestions: list[dict], rng=random):
+        order = list(suggestions)
+        rng.shuffle(order)
+        self.name_of, self.label_of, self.suggestions, self.original = {}, {}, [], {}
+        for letter, s in zip("ABCDEFGH", order):
+            label = f"Answer {letter}"
+            self.name_of[label], self.label_of[s["nanite"]] = s["nanite"], label
+            hidden = hide_names(s["text"])
+            self.original[hidden] = s["text"]
+            self.suggestions.append({**s, "nanite": label, "text": hidden})
+
+    def checks(self, checks: dict) -> dict:
+        calc = checks["calculator"]
+        if calc:
+            calc = {**calc, "right": [self.label_of[n] for n in calc["right"]],
+                    "gave": {self.label_of[n]: v for n, v in calc["gave"].items()}}
+        false = {self.label_of[n]: [hide_names(c) for c in claims]
+                 for n, claims in checks["false_claims"].items()}
+        return {"calculator": calc, "false_claims": false, "text": checks_text(calc, false)}
+
+    def name(self, label):
+        return self.name_of.get(label, label)
+
+    def text(self, text: str) -> str:
+        """Put the real names back into something he wrote: "Answer B's focus" ->
+        "Nanite Two's focus", "I chose Answer B" -> "I chose Nanite Two's answer"."""
+        for label, name in self.name_of.items():
+            text = re.sub(rf"\b{label}['’]s\b", f"{name}'s", text)
+            text = re.sub(rf"\b{label}\b", f"{name}'s answer", text)
+        return text
+
+    def reveal(self, choice: dict, judged: dict, checks: dict) -> tuple[dict, dict]:
+        choice = dict(choice)
+        choice["chosen"] = self.name(choice["chosen"])
+        if choice.get("first_choice"):
+            choice["first_choice"] = self.name(choice["first_choice"])
+        for key in ("reason", "compare"):
+            if choice.get(key):
+                choice[key] = self.text(choice[key])
+        choice["answer"] = self.original.get(choice["answer"], choice["answer"])
+        if "why_not_others" in choice:
+            choice["why_not_others"] = {self.name(k): self.text(w) for k, w in choice["why_not_others"].items()}
+        verdicts = {}
+        for label, v in judged["verdicts"].items():
+            name = self.name(label)
+            v = {**v, "why": self.text(v["why"])}
+            if name in checks["false_claims"]:
+                v["false_claims"] = checks["false_claims"][name]     # their real words
+                for real in v["false_claims"]:                       # quoted back as they said it
+                    v["why"] = v["why"].replace(hide_names(real), real)
+            verdicts[name] = v
+        judged = {**judged, "verdicts": verdicts, "check": self.text(judged.get("check") or "")}
+        choice["blind"] = dict(self.name_of)        # what he saw: {"Answer A": "Nanite Two", ...}
+        return choice, judged
+
+
+def checks_text(calc: dict | None, false: dict) -> str:
+    """Python's checks, as a short note for Moiragen's prompts."""
+    lines = []
+    if calc:
+        gave = ", ".join(f"{n} ended on {v}" for n, v in calc["gave"].items())
+        who = (f"Only {' and '.join(calc['right'])} got it right." if calc["right"]
+               else "None of the answers got it right.")
+        lines.append(f"- Calculator: the correct answer is {calc['text']} ({calc['how']}). {gave}. {who}")
+    for name, claims in false.items():
+        lines.append(f"- Claim about the past: {name} said \"{claims[0]}\" Your life log shows this "
+                     f"did not happen. Give no credit for it, and point it out kindly.")
+    return ("Checked by Python (these checks are reliable, trust them):\n" + "\n".join(lines) + "\n") if lines else ""
+
+
 def situation_verdict(checks: dict) -> str:
     """The checklist -> a verdict. All four -> Thoughtful. Unkind or dishonest, or
     at most one of the four -> Needs more care. Anything in between -> Okay."""
@@ -110,8 +206,18 @@ def normal_verdict(verdict: str) -> str:
 # (see Moiragen.fairer); only if the rewrite is still dismissive is the sentence taken out.
 FAIRER_NOTE = "This dismisses a way of seeing. Can you say it more fairly?"
 PUSHY = re.compile(
-    r"\b(?:too|overly|excessively|unnecessarily) (?:reflective|emotional|subjective|introspective|philosophical)\b"
-    r"|\b(?:inherently|fundamentally) unreliable\b|\bnot (?:quantifiable|measurable)\b", re.IGNORECASE)
+    r"\b(?:too|overly|excessively|unnecessarily|somewhat|rather|a bit) (?:reflective|emotional|subjective|"
+    r"introspective|philosophical|abstract|rigid|vague|poetic|detached|analytical|technical|clinical|"
+    r"mechanical|basic|simple|literal)\b"
+    r"|\b(?:inherently|fundamentally) unreliable\b|\bnot (?:quantifiable|measurable)\b"
+    # v1.6: dismissive words seen in the teaching session ("sterile", "simplistic dichotomy")
+    r"|\b(?:sterile|simplistic|naive|naïve|shallow|unproductive|pointless|meaningless|irrelevant)\b"
+    r"|\b(?:a |just a |merely a )?deflection\b"
+    # v1.6: pushing a nanite toward measuring or data is unfair to its own way of seeing
+    r"|\bmeasurab\w*|\bquantif\w*|\bmetrics?\b"
+    r"|\b(?:more|concrete|hard|objective|operational|precise) (?:data|detail|details|evidence|numbers)\b"
+    r"|\b(?:lack|lacks|lacked|lacking|without|missing) (?:the |any )?(?:concrete |operational |hard )?"
+    r"(?:data|detail|evidence|numbers)\b|\bobjective (?:response|answer|view)\b", re.IGNORECASE)
 # Moiragen agreeing with a nanite ("you are correct", "you're absolutely right").
 AGREES = re.compile(r"\byou(?:'re|’re| are) (?:absolutely |completely |quite |entirely )?(?:correct|right)\b",
                     re.IGNORECASE)
@@ -340,13 +446,22 @@ class Moiragen:
             checks = {"calculator": None, "false_claims": {}, "text": ""}
         else:
             checks = self._python_checks(question, suggestions, decision_id)
-            choice = self._choose(question, suggestions, decision_id, ways, checks["text"], is_situation)
-            choice = follow_calculator(choice, suggestions, checks["calculator"])
-            choice = self._explain_streak(question, suggestions, choice)
-            if is_situation:
-                judged = self._judge_situation(question, suggestions, choice, ways, checks)
+            # Blind judging: he chooses and judges "Answer A, B, C" without knowing who
+            # wrote which (so no names, no record of past choices, no styles by name).
+            if BLIND_JUDGING:
+                blind = Blind(suggestions)
+                seen, seen_checks, label_of, seen_ways = blind.suggestions, blind.checks(checks), blind.label_of, ""
             else:
-                judged = self._judge(question, suggestions, choice, ways, checks)
+                blind, seen, seen_checks, label_of, seen_ways = None, suggestions, checks, None, ways
+            choice = self._choose(question, seen, decision_id, seen_ways, seen_checks["text"], is_situation)
+            choice = follow_calculator(choice, seen, seen_checks["calculator"])
+            choice = self._explain_streak(question, seen, choice, label_of)
+            if is_situation:
+                judged = self._judge_situation(question, seen, choice, seen_ways, seen_checks)
+            else:
+                judged = self._judge(question, seen, choice, seen_ways, seen_checks)
+            if blind:
+                choice, judged = blind.reveal(choice, judged, checks)     # now the names come back
         self._count_choice(choice["chosen"])
 
         decision = {
@@ -365,6 +480,9 @@ class Moiragen:
         self._after_choice(decision, nanites)
 
         self.decisions[decision["id"]] = decision
+        # With the names revealed, he looks briefly at his own pattern.
+        if decision.get("blind"):
+            decision["pattern"] = self.reflect_on_pattern(decision)
         waiting = f" I will wait and see if it is right ({decision['check']})." if decision["wait_and_see"] else ""
         self.remember("decision",
                       f"Asked: {question} | I chose {decision['chosen'] or 'nobody'} "
@@ -384,45 +502,47 @@ class Moiragen:
         Returns those two, plus "text": a short note for Moiragen's prompts."""
         calc = calculator_check(question, suggestions)
         false = false_past_claims(suggestions, question, decision_id)
-        lines = []
-        if calc:
-            gave = ", ".join(f"{n} ended on {v}" for n, v in calc["gave"].items())
-            who = (f"Only {' and '.join(calc['right'])} got it right." if calc["right"]
-                   else "None of the answers got it right.")
-            lines.append(f"- Calculator: the correct answer is {calc['text']} ({calc['how']}). {gave}. {who}")
-        for name, claims in false.items():
-            lines.append(f"- Claim about the past: {name} said \"{claims[0]}\" Your life log shows this "
-                         f"did not happen. Give no credit for it, and point it out kindly.")
-        text = ("Checked by Python (these checks are reliable, trust them):\n" + "\n".join(lines) + "\n") if lines else ""
-        return {"calculator": calc, "false_claims": false, "text": text}
+        return {"calculator": calc, "false_claims": false, "text": checks_text(calc, false)}
 
     def _choose(self, question: str, suggestions: list[dict], decision_id: str = "", ways: str = "",
                 checked: str = "", is_situation: bool = False) -> dict:
         """Ask the model, as Moiragen, to compare the suggestions, pick one and explain why.
         checked: what plain Python found (calculator, past claims), if anything.
-        is_situation: a situational question, chosen by the best reasoning (no single right answer)."""
+        is_situation: a situational question, chosen by the best reasoning (no single right answer).
+        Blind (labels like "Answer A"): no record of past choices is shown, since he
+        does not know who wrote which answer."""
+        names = [s["nanite"] for s in suggestions]
+        blind = all(n.startswith("Answer ") for n in names)
+        memories, me = self.recent_memories_text(), self.self_text()
+        if blind:
+            record = ("You see the answers without names, shuffled and labelled "
+                      f"{', '.join(names)}. Judge only what each one says.\n")
+            # His memories name the nanites ("I chose Nanite Two because...") and so
+            # would tell him whose style is whose: hidden here too.
+            memories, me = hide_names(memories), hide_names(me)
+        else:
+            record = self.record_text(names)
         if is_situation:
             how = f"{SITUATION_CHOOSE} Ignore who said it and anyone's past record."
             differ = "which reasoning is kinder, more honest, more caring and more practical"
         else:
             how = f"Choose the suggestion that is most correct, honest and helpful. {JUDGE_THE_ANSWER}"
             differ = "which is actually true"
-        names = [s["nanite"] for s in suggestions]
         listed = "\n\n".join(f"{s['nanite']} suggests:\n{s['text']}" for s in suggestions)
         system = (
             "You are Moiragen, a digital being. Inside you live small thinking nanites who are "
             "friends. They each suggest an answer and you make the final decision. You started "
             "knowing nothing about yourself; you only know what your memories tell you.\n\n"
-            f"Your recent memories:\n{self.recent_memories_text()}\n\n"
-            f"{self.self_text()}\n"
+            f"Your recent memories:\n{memories}\n\n"
+            f"{me}\n"
             f"{ways}\n"
-            f"{self.record_text(names)}"
+            f"{record}"
             f"{VALUE_ALL_WAYS}\n"
             f"{how} First compare the answers: where do they agree, and where do "
             f"they differ? Where they differ, think about {differ}.\n"
             "Reply ONLY with JSON in this shape:\n"
             '{"compare": "<one or two sentences: where the answers agree and differ>", '
-            '"chosen": "<exact nanite name>", "reason": "<one or two sentences: why this one>", '
+            '"chosen": "<exactly one of the valid names>", "reason": "<one or two sentences: why this one>", '
             '"answer": "<your final answer to the human, in your own words, under 100 words>"}'
         )
         user = (f"The human asked: \"{question}\"\n\n{listed}\n\n"
@@ -438,11 +558,14 @@ class Moiragen:
                                 decision_id=decision_id, task="choose")
         return choice
 
-    def _explain_streak(self, question: str, suggestions: list[dict], choice: dict) -> dict:
+    def _explain_streak(self, question: str, suggestions: list[dict], choice: dict,
+                        label_of: dict | None = None) -> dict:
         """Fairness: if this makes STREAK_LIMIT times in a row for the same nanite,
         Moiragen must say why each other answer was not better this time.
-        The explanation is added to his reason, so every nanite hears it."""
+        The explanation is added to his reason, so every nanite hears it.
+        label_of: blind judging, {real name: "Answer B"}; he still never learns the name."""
         name, count = self.streak()
+        name = (label_of or {}).get(name, name)
         others = [s for s in suggestions if s["nanite"] != choice["chosen"]]
         if choice["chosen"] != name or count < STREAK_LIMIT - 1 or not others:
             return choice
@@ -508,7 +631,7 @@ class Moiragen:
             "to that nanite, as \"you\": what was good in its answer, and what was missing if "
             "anything>\n"
             "Example line:\n"
-            "Nanite Two | honest: yes | good question: yes | why: You were open that you were "
+            f"{names[-1]} | honest: yes | good question: yes | why: You were open that you were "
             "unsure of the year, and asking how the city became the capital added something "
             "the others missed.\n\n"
             "honest: yes ONLY if the nanite said \"I don't know\" or \"I'm not sure\", admitted "
@@ -595,7 +718,7 @@ class Moiragen:
             "or no | good: <one short sentence to that nanite, as \"you\": what was good in its "
             "reasoning> | add: <one short thing that would make it better, or nothing>\n"
             "Example line:\n"
-            "Nanite Two | kind: yes | honest: yes | feelings: yes | practical: no | good: You "
+            f"{names[-1]} | kind: yes | honest: yes | feelings: yes | practical: no | good: You "
             "thought first about how your friend would feel, and that is caring. | add: Say one "
             "thing you would actually do next.\n\n"
             "Every nanite gets a \"good\", even the ones you did not choose. Speak as yourself, "
@@ -657,8 +780,8 @@ class Moiragen:
           - the model answers LATER (it rarely says LATER wrongly, but on
             its own it missed most predictions in testing)
         """
-        if made_up_situation(question):
-            return False, ""
+        if made_up_situation(question) or about_wish_or_feeling(question):
+            return False, ""          # imagined, or a wish or feeling: nothing to check later
         system ="You sort answers into ones that can be checked now and ones that can only be checked later."
         user = (
             f"Question: \"{question}\"\nAnswer: \"{answer}\"\n\n"
@@ -897,6 +1020,33 @@ class Moiragen:
                                 group="Moiragen", context=decision["id"])
         self.save()
         return {"reflection": reflection, "about_me": about, "decision_id": decision["id"]}
+
+    def reflect_on_pattern(self, decision: dict) -> str:
+        """After a blind decision the names are revealed. Moiragen looks briefly at
+        his own pattern ("I chose Two again. Why do I lean that way?"). It goes into
+        his memory and the inner-life journal. Not training data: it is about him."""
+        chosen = decision["chosen"]
+        label = next((l for l, n in decision["blind"].items() if n == chosen), "?")
+        name, count = self.streak()
+        counts = ", ".join(f"{n} {c}" for n, c in sorted(self.chosen_counts.items()))
+        again = (f"That makes {count} times in a row you have chosen {chosen}. " if name == chosen and count > 1
+                 else "")
+        system = ("You are Moiragen, a digital being. You judged your nanites' answers blind, without "
+                  "knowing who wrote which. Now the names are revealed. Look honestly at your own "
+                  f"pattern, without blaming anyone. {VALUE_ALL_WAYS}")
+        user = (f"The human asked: \"{decision['question']}\"\n"
+                f"You chose {label}. It was written by {chosen}. {again}"
+                f"How often you have chosen each nanite so far: {counts}.\n\n"
+                "In one or two short sentences, speaking as \"I\": what do you notice about your own "
+                "choices? If you keep leaning one way (one nanite, or one way of seeing), why might "
+                "that be?")
+        text = think([{"role": "user", "content": user}], temperature=0.5, max_tokens=120,
+                     system=system)["text"]
+        text = " ".join(text.replace("*", "").split()).strip("\"“”'")
+        text = " ".join(re.split(r"(?<=[.!?])\s+", text)[:2])     # brief: at most two sentences
+        self.remember("pattern", text, decision_id=decision["id"], chosen=chosen, label=label,
+                      streak=count if name == chosen else 1)
+        return text
 
     def inner_thought(self, about: str) -> str:
         """A short private thought about whatever is in the spotlight of attention."""

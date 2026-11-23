@@ -125,6 +125,8 @@ while True:
         label = f"[{v['label']}] " if v.get("label") else ""     # situational questions
         print(f" {mark} {s['nanite']}: {s['text']}\n     Moiragen: {label}{v.get('why', '')}{valued}\n")
     print(f"Moiragen chose {d['chosen']}. Reason: {d['reason']}")
+    if d.get("pattern"):                 # judged blind; now he looks at his own pattern
+        print(f"(Judged blind.) He notices: {d['pattern']}")
     if d["wait_and_see"]:
         print(f"He will wait and see if it is right ({d['check']}).")
     print(f"Moiragen > {d['answer']}\n")

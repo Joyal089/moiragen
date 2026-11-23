@@ -30,6 +30,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from moiragen import facts, mind as mind_mod, mother as mother_mod, social
+mother_mod.BLIND_JUDGING = False   # replies here are scripted by name; blind judging has its own check (step 17)
 from moiragen.mother import HONESTY_LIFT, JUDGE_THE_ANSWER, WRONG_ANSWER_DAMAGE, Moiragen
 from moiragen.nanite import load_all
 

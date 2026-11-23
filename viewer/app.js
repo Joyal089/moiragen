@@ -300,6 +300,8 @@ function showDecision(d) {
   const ch = d.changed_after;
   $("d-changed").hidden = !ch;
   if (ch) $("d-changed").textContent = `${ch.by} disagreed, and Moiragen changed his choice from ${ch.from}: ${ch.why}`;
+  $("d-pattern").hidden = !d.pattern;
+  if (d.pattern) $("d-pattern").textContent = `Judged blind. With the names revealed, he notices: ${d.pattern}`;
   $("d-verdict").hidden = false;
   // A situational question gets Thoughtful / Okay / Needs more care instead of Right / Wrong.
   const kind = d.situational ? "situation" : "fact";
