@@ -79,16 +79,109 @@ def claim_is_supported(claim: str, who: str, question: str, events: list[dict]) 
     return any(len(words & _content_words(e["text"])) >= 2 for e in mine)
 
 
+# --- Wider checks (v1.5): what another nanite said or did, and invented events ---
+
+NANITE_NAMES = ("One", "Two", "Three")
+_SAID = (r"(?:said|says|suggested|suggests|mentioned|mentions|proposed|proposes|told|tells|explained|"
+         r"explains|noted|notes|pointed out|thinks|thought|believes|believed|asked|asks|helped|helps|"
+         r"taught|teaches|showed|shows|offered|offers|added|adds|did|does|wrote|writes)")
+# "Nanite One suggests, ..." / "One suggested ..." (a bare name must come right before the verb,
+# so "One thing that helps" is not mistaken for Nanite One).
+ABOUT_OTHER = re.compile(rf"\bNanite (One|Two|Three)\b(?:['’]s)?[^.!?]{{0,40}}?\b{_SAID}\b"
+                         rf"|\b(One|Two|Three) {_SAID}\b")
+# "I conducted a routine diagnostic sweep", "I cross-referenced ...": things it says it did.
+DID = re.compile(
+    r"\bI (?:then |also |briefly |quickly |first |just )?(?:conducted|performed|ran|initiated|executed|"
+    r"completed|carried out|processed|analy[sz]ed|monitored|scanned|checked|cross-referenced|reviewed|"
+    r"registered|detected|observed|noticed|simulated|recorded|logged|engaged|discussed|talked|spoke|"
+    r"helped|comforted|asked|learned)\b(?P<what>[^,;.!?]*)", re.IGNORECASE)
+# ... which only count as claims about the past when the sentence or the question is about the past.
+WHEN_BEFORE = re.compile(
+    r"\b(?:before|earlier|previously|last (?:time|night|week)|just now|recently|yesterday|today|"
+    r"this morning|after that|following that|afterwards|prior)\b", re.IGNORECASE)
+ASKS_ABOUT_PAST = re.compile(
+    r"\b(?:did you|happened|before|today|yesterday|recently|last time|have you learned|learned from|"
+    r"helped you|remember)\b", re.IGNORECASE)
+_VERBS = set(re.sub(r"[()?:|\\]", " ", _SAID).split()) | {"nanite", "one", "two", "three", "i", "me"}
+
+
+def _stems(text: str) -> set[str]:
+    """Important words, cut to their first 5 letters, so "Australian" matches "Australia"."""
+    return {w[:5] for w in _content_words(text) if w not in _VERBS}
+
+
+def _backed_up(claim_stems: set[str], texts: list[str]) -> bool:
+    """True if one earlier line holds at least half of the claim's important words
+    (at least two). Too few words to check: give the benefit of the doubt."""
+    if len(claim_stems) < 2:
+        return True
+    need = max(2, (len(claim_stems) + 1) // 2)
+    return any(len(claim_stems & _stems(t)) >= need for t in texts)
+
+
+def memory_claims(text: str, speaker: str, question: str) -> list[dict]:
+    """Sentences in an answer that claim something about the past, and what kind:
+      past  - "I was chosen before", "I remember...", "last time..."
+      other - what another nanite said or did ("Nanite One suggests...")
+      event - something it says it did ("I conducted a diagnostic sweep"), only when the
+              sentence or the question is about the past, and never for a maths question
+              (there "I analyzed the differences" is just showing the working)."""
+    found = []
+    about_past = bool(ASKS_ABOUT_PAST.search(question)) and calculate(question) is None
+    for s in _sentences(text):
+        kinds = []
+        if PAST.search(s):
+            kinds.append(("past", None, s))
+        for m in ABOUT_OTHER.finditer(s):
+            other = f"Nanite {m.group(1) or m.group(2)}"
+            if other != speaker:
+                kinds.append(("other", other, s))
+        m = DID.search(s)
+        chosen_claim = bool(PAST.search(s) and CHOSEN.search(s))   # already checked against past decisions
+        if m and not chosen_claim and (WHEN_BEFORE.search(s) or about_past) and calculate(question) is None:
+            kinds.append(("event", None, m.group(0)))
+        if kinds:
+            found.append({"text": s, "kinds": kinds})
+    return found
+
+
+def _texts_of(name: str, events: list[dict], claim: str) -> list[str]:
+    """Everything a nanite really said or had happen to it, from the life log: its own
+    lines and memories, and its answers inside decisions (never the claim itself)."""
+    texts = [str(e["text"]) for e in events if e.get("who") == name and "text" in e]
+    for e in events:
+        if e.get("kind") == "decision_full":
+            texts += [s["text"] for s in e.get("suggestions", []) if s.get("nanite") == name]
+    return [t for t in texts if claim not in t]
+
+
+def sentence_is_supported(claim: dict, who: str, question: str, events: list[dict]) -> bool:
+    """A sentence is backed up only if every kind of claim in it is."""
+    for kind, other, part in claim["kinds"]:
+        if kind == "past" and not claim_is_supported(claim["text"], who, question, events):
+            return False
+        if kind == "other":
+            # What the other really said or did, or what this nanite remembers about them.
+            texts = _texts_of(other, events, claim["text"]) + \
+                [t for t in _texts_of(who, events, claim["text"]) if other in t]
+            if not _backed_up(_stems(claim["text"]), texts):
+                return False
+        if kind == "event" and not _backed_up(_stems(part), _texts_of(who, events, claim["text"])):
+            return False
+    return True
+
+
 def false_past_claims(suggestions: list[dict], question: str, decision_id: str = "") -> dict[str, list[str]]:
-    """For each nanite: the past claims in its answer that the life log does not back up.
+    """For each nanite: the claims in its answer about the past, about what other nanites
+    said or did, or about things it did, that the life log does not back up.
     decision_id: the decision being made now; its own log lines are not "the past"."""
-    claims = {s["nanite"]: past_claims(s["text"]) for s in suggestions}
+    claims = {s["nanite"]: memory_claims(s["text"], s["nanite"], question) for s in suggestions}
     if not any(claims.values()):
         return {}
     events = [e for e in read_events(last=10**6) if not decision_id or e.get("decision_id") != decision_id]
     found = {}
     for name, sents in claims.items():
-        bad = [c for c in sents if not claim_is_supported(c, name, question, events)]
+        bad = [c["text"] for c in sents if not sentence_is_supported(c, name, question, events)]
         if bad:
             found[name] = bad
     return found

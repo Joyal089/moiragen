@@ -77,7 +77,7 @@ def render(e: dict) -> str | None:
         return f"- {at} _(echo guard: {who} repeated a recent line and was asked for something new)_"
     if k == "echo_quiet":
         return f"- {at} _(echo guard: {who} had nothing new to say, so stayed quiet)_"
-    if k in ("presence", "slept", "awake_note"):
+    if k in ("presence", "slept", "awake_note") and who == "mind":   # (each one's own sleep note is summed up here)
         return f"- {at} _{clean(e.get('text'))}_"
     return None
 

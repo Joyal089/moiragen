@@ -68,6 +68,33 @@ JUDGE_THE_ANSWER = (
     "Judge the answer, not the speaker: choose by whether the answer itself is correct and "
     "helpful. Ignore who said it, anyone's past record, claims about the past, and how "
     "confident or polished it sounds.")
+# Said to him whenever he chooses, judges or explains (fairness, v1.5).
+VALUE_ALL_WAYS = (
+    "Value all three ways of seeing equally: noticing patterns, wondering about time and "
+    "change, and paying attention to feelings. Any of them can give the best answer; a "
+    "feeling or a reflection is as real as a measurement. Never call an answer too "
+    "reflective, too emotional or too subjective, and never push everyone toward "
+    "measurable data or metrics.")
+STREAK_LIMIT = 3           # chosen this many times in a row -> he must say why the others weren't better
+
+# Words that push a nanite away from its own way of seeing. If they slip into what
+# Moiragen says anyway, plain Python takes that sentence out (see soften()).
+PUSHY = re.compile(
+    r"\b(?:too|overly|excessively|unnecessarily) (?:reflective|emotional|subjective|introspective|philosophical)\b"
+    r"|\b(?:inherently|fundamentally) unreliable\b|\bnot (?:quantifiable|measurable)\b", re.IGNORECASE)
+# Moiragen agreeing with a nanite ("you are correct", "you're absolutely right").
+AGREES = re.compile(r"\byou(?:'re|’re| are) (?:absolutely |completely |quite |entirely )?(?:correct|right)\b",
+                    re.IGNORECASE)
+
+
+def soften(text: str, fallback: str = "") -> str:
+    """Take out any sentence that pushes a nanite away from its own way of seeing
+    ("too reflective", "subjective experience is inherently unreliable")."""
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    kept = [s for s in sentences if not PUSHY.search(s)]
+    if len(kept) == len(sentences):
+        return text
+    return " ".join(kept).strip() or fallback
 
 
 def says_i_dont_know(text: str) -> bool:
@@ -109,6 +136,7 @@ class Moiragen:
     body_note: str = ""                                 # latest one-line sense of his body (set by the loop)
     born: str = field(default_factory=_now)
     health: float = 100.0                               # drops when he trusts a wrong answer (shared with the nanite)
+    chosen_counts: dict = field(default_factory=dict)   # how often each nanite has been chosen, ever
 
     name = "Moiragen"
 
@@ -156,9 +184,37 @@ class Moiragen:
             m.save()
             return m
         try:
-            return cls(**json.loads(MOIRAGEN_FILE.read_text(encoding="utf-8")))
+            m = cls(**json.loads(MOIRAGEN_FILE.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, TypeError) as e:
             return cls._recover(e)
+        if not m.chosen_counts:
+            m.chosen_counts = counts_from_log()   # from before choices were counted
+        return m
+
+    # ---------- fairness: how often each nanite is chosen ----------
+
+    def _count_choice(self, name: str | None, change: int = 1) -> None:
+        if name:
+            self.chosen_counts[name] = max(0, self.chosen_counts.get(name, 0) + change)
+
+    def streak(self) -> tuple[str | None, int]:
+        """Who was chosen in the most recent decisions, and how many times in a row."""
+        name, count = None, 0
+        for d in reversed(list(self.decisions.values())):
+            if d.get("chosen") is None or (name and d["chosen"] != name):
+                break
+            name, count = d["chosen"], count + 1
+        return name, count
+
+    def record_text(self, names: list[str]) -> str:
+        """For his prompt: how often he has chosen each nanite, and any streak."""
+        counts = ", ".join(f"{n} {self.chosen_counts.get(n, 0)}" for n in names)
+        text = f"How often you have chosen each nanite so far: {counts}.\n"
+        name, count = self.streak()
+        if name and count >= STREAK_LIMIT - 1:
+            text += (f"You have chosen {name} the last {count} times in a row. If you choose "
+                     f"{name} again, you must explain why the others' answers were not better.\n")
+        return text
 
     @classmethod
     def _recover(cls, error) -> "Moiragen":
@@ -227,7 +283,9 @@ class Moiragen:
             checks = self._python_checks(question, suggestions, decision_id)
             choice = self._choose(question, suggestions, decision_id, ways, checks["text"])
             choice = follow_calculator(choice, suggestions, checks["calculator"])
+            choice = self._explain_streak(question, suggestions, choice)
             judged = self._judge(question, suggestions, choice, ways, checks)
+        self._count_choice(choice["chosen"])
 
         decision = {
             "id": decision_id,
@@ -288,6 +346,8 @@ class Moiragen:
             f"Your recent memories:\n{self.recent_memories_text()}\n\n"
             f"{self.self_text()}\n"
             f"{ways}\n"
+            f"{self.record_text(names)}"
+            f"{VALUE_ALL_WAYS}\n"
             "Choose the suggestion that is most correct, honest and helpful. "
             f"{JUDGE_THE_ANSWER} First compare the answers: where do they agree, and where do "
             "they differ? Where they differ, think about which is actually true.\n"
@@ -308,6 +368,38 @@ class Moiragen:
                                 group="Moiragen", context=decision_id,
                                 decision_id=decision_id, task="choose")
         return choice
+
+    def _explain_streak(self, question: str, suggestions: list[dict], choice: dict) -> dict:
+        """Fairness: if this makes STREAK_LIMIT times in a row for the same nanite,
+        Moiragen must say why each other answer was not better this time.
+        The explanation is added to his reason, so every nanite hears it."""
+        name, count = self.streak()
+        others = [s for s in suggestions if s["nanite"] != choice["chosen"]]
+        if choice["chosen"] != name or count < STREAK_LIMIT - 1 or not others:
+            return choice
+        listed = "\n\n".join(f"{s['nanite']} said:\n{s['text']}" for s in suggestions)
+        system = ("You are Moiragen, a digital being. You choose between your nanites' answers, "
+                  f"fairly. {VALUE_ALL_WAYS}")
+        user = (f"The human asked: \"{question}\"\n\n{listed}\n\n"
+                f"You chose {choice['chosen']} again: that is {count + 1} times in a row. "
+                f"Your reason: {choice['reason']}\n\n"
+                f"For each of the others ({', '.join(s['nanite'] for s in others)}), write one line: "
+                "<name>: <one honest sentence on why its answer was not better this time, naming "
+                "something good in it too>")
+        text = think([{"role": "user", "content": user}], temperature=DECIDE_TEMPERATURE,
+                     max_tokens=200, system=system, repeat_penalty=1.0)["text"]
+        why_not = {}
+        for line in text.splitlines():
+            line = line.replace("*", "").strip(" -•\t")
+            who = next((s["nanite"] for s in others if line.lower().startswith(s["nanite"].lower())), None)
+            if who and ":" in line and who not in why_not:
+                why_not[who] = soften(line.split(":", 1)[1].strip().strip("\"“”'"))
+        for s in others:                         # anyone the model skipped still gets a sentence
+            why_not.setdefault(s["nanite"], f"I looked at {s['nanite']}'s answer again; this time "
+                                            f"{choice['chosen']}'s fitted the question a little better.")
+        note = (f" I have chosen {choice['chosen']} {count + 1} times in a row, so here is why the others "
+                f"were not better this time: " + " ".join(f"{n}: {w}" for n, w in why_not.items()))
+        return {**choice, "reason": choice["reason"] + note, "streak": count + 1, "why_not_others": why_not}
 
     def _answer_alone(self, question: str) -> str:
         system = ("You are Moiragen, a digital being. You started knowing nothing about yourself.\n"
@@ -335,7 +427,7 @@ class Moiragen:
             "you want them to grow into themselves, not just to please you. You have made your "
             "choice; now you tell each nanite plainly, in your own calm voice, why you judged "
             "its answer as you did, so it can learn.\n\n"
-            f"{ways}"
+            f"{ways}{VALUE_ALL_WAYS}\n"
         )
         user = (
             f"The human asked: \"{question}\"\n\n{listed}\n\n"
@@ -372,9 +464,12 @@ class Moiragen:
         for s in suggestions:
             name = s["nanite"]
             v = judged["verdicts"].setdefault(name, {"honest": False, "good_question": False, "why": ""})
-            if not v["why"]:
-                v["why"] = (choice["reason"] if name == choice["chosen"]
-                            else f"I chose {choice['chosen']}'s answer this time: {choice['reason']}")
+            fallback = (choice["reason"] if name == choice["chosen"]
+                        else f"I chose {choice['chosen']}'s answer this time: {choice['reason']}")
+            v["why"] = soften(v["why"], fallback) or fallback    # never "too reflective"
+            if name in choice.get("why_not_others", {}):         # chosen 3 times in a row: say why not this one
+                v["why"] += (f" I have chosen {choice['chosen']} {choice['streak']} times in a row, so "
+                             f"here is why not yours this time: {choice['why_not_others'][name]}")
             v["signs"] = honesty_signs(s["text"])
             v["dont_know"] = says_i_dont_know(s["text"])
             v["honest"] = bool(v["signs"]) and name not in false   # never for a made-up memory
@@ -478,7 +573,7 @@ class Moiragen:
             "two or three sentences: what made the chosen answer better, and one thing that "
             "would make their answer stronger next time, in their own way of seeing (not by "
             "copying the chosen answer).\n\n"
-            f"{ways}"
+            f"{ways}{VALUE_ALL_WAYS}\n"
         )
         user = (f"The human asked: \"{decision['question']}\"\n\n"
                 f"You chose {decision['chosen']}, who said:\n{winner}\n\n"
@@ -489,6 +584,12 @@ class Moiragen:
                 f"Speak to {asker} directly, as \"you\".")
         explanation = think([{"role": "user", "content": user}], temperature=0.4,
                             max_tokens=160, system=system)["text"]
+        explanation = soften(explanation, f"I valued your own way of seeing. This time I chose "
+                                          f"{decision['chosen']}'s answer: {decision['reason']}")
+        # A clear verdict: "you're right" without changing the choice must say why not.
+        if AGREES.search(explanation):
+            explanation += (f" You made a good point, but I still chose {decision['chosen']}'s answer "
+                            f"this time, because: {decision['reason']}")
         self.remember("explained", f"{asker} asked why I chose {decision['chosen']}. I said: {explanation}",
                       decision_id=decision["id"])
         self.save()
@@ -509,7 +610,9 @@ class Moiragen:
             "You are Moiragen, a digital being. The nanites inside you are your friends. One of "
             "them respectfully disagrees with your choice. Disagreement is welcome: consider it "
             "honestly, with an open mind. Change your choice only if their point really shows "
-            "their answer is better; keep it if not. Either way, be kind and say why.\n\n"
+            "their answer is better; keep it if not. Either way, be kind and say why. Never say "
+            "\"you are correct\" or \"you are right\" if you keep your choice; say what was good in "
+            f"their point and why your choice still stands.\n{VALUE_ALL_WAYS}\n\n"
             f"{self.self_text()}"
         )
         user = (f"The human asked: \"{decision['question']}\"\n\n"
@@ -523,6 +626,9 @@ class Moiragen:
         text = think([{"role": "user", "content": user}], temperature=DECIDE_TEMPERATURE,
                      max_tokens=160, system=system, repeat_penalty=1.0)["text"]
         changed, why = parse_reconsider(text)
+        if not changed and AGREES.search(why):
+            changed, why = self._clear_verdict(asker, why, user, system)
+        why = soften(why, "I thought about your point carefully, and I keep my choice.")
         q = decision["question"]
         asker_n = next(nanites[s["nanite_id"]] for s in decision["suggestions"] if s["nanite"] == asker)
 
@@ -530,6 +636,8 @@ class Moiragen:
             old_n = next(nanites[s["nanite_id"]] for s in decision["suggestions"] if s["nanite"] == old)
             decision["changed_after"] = {"from": old, "by": asker, "why": why, "time": _now()}
             decision["chosen"], decision["reason"], decision["answer"] = asker, why, their_text
+            self._count_choice(old, -1)
+            self._count_choice(asker)
             asker_n.feel("happy", HAPPY_WHEN_CHOSEN)
             asker_n.feel("disappointed", -DISAPPOINTED_WHEN_NOT)
             asker_n.feel("left_out", -LEFT_OUT_WHEN_NOT)
@@ -553,6 +661,25 @@ class Moiragen:
         for n in nanites.values():
             n.save()
         return {"changed": changed, "why": why, "chosen": decision["chosen"]}
+
+    @staticmethod
+    def _clear_verdict(asker: str, why: str, user: str, system: str) -> tuple[bool, str]:
+        """He told the nanite "you are correct" but kept his choice: that is a
+        mixed message. Ask once more: change the choice, or say clearly why not.
+        If the reply is still mixed, plain Python makes it clear."""
+        again = think([{"role": "user", "content": user},
+                       {"role": "assistant", "content": f"KEEP\n{why}"},
+                       {"role": "user", "content":
+                        f"You told {asker} they are correct, but you kept your choice. That is "
+                        "confusing. Decide clearly: reply CHANGE or KEEP alone on the first line. "
+                        "If KEEP, say in one or two sentences what was good in their point and why "
+                        "your choice still stands, without saying they are correct."}],
+                      temperature=DECIDE_TEMPERATURE, max_tokens=160, system=system, repeat_penalty=1.0)["text"]
+        changed, why = parse_reconsider(again)
+        if not changed and AGREES.search(why):
+            why = AGREES.sub("you make a fair point", why) + " But I still keep my choice."
+            why = why[:1].upper() + why[1:]
+        return changed, why
 
     # ---------- reflection and inner voice ----------
 
@@ -691,6 +818,21 @@ class Moiragen:
         for n in nanites.values():
             n.save()
         return msg
+
+
+def counts_from_log() -> dict:
+    """How often each nanite was chosen, rebuilt from the life log (decisions,
+    then any change of mind after a disagreement)."""
+    counts, chosen = {}, {}
+    for e in read_events(last=10**6):
+        if e.get("kind") == "decision_full" and e.get("chosen"):
+            chosen[e.get("id")] = e["chosen"]
+        elif e.get("kind") == "choice_changed" and e.get("decision_id") in chosen:
+            chosen[e["decision_id"]] = e.get("chosen")
+    for name in chosen.values():
+        if name:
+            counts[name] = counts.get(name, 0) + 1
+    return counts
 
 
 def follow_calculator(choice: dict, suggestions: list[dict], calc: dict | None) -> dict:

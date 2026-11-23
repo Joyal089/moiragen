@@ -65,6 +65,14 @@ INNER_THOUGHT_GAP = 60     # at least this many seconds between inner thoughts
 INNER_THOUGHT_MIN = 0.5    # only things at least this important get an inner thought
 BROADCAST_MIN = 0.6        # nanites remember stage winners at least this important
 STORY_HOUR = 22            # write today's story after this hour
+SLEEP_NOTE_HOURS = 0.25    # a sleep at least this long (15 minutes) goes into their memories
+
+
+def how_long(hours: float) -> str:
+    """3.4 -> "about 3 hours", 0.6 -> "about 36 minutes"."""
+    if hours < 1:
+        return f"about {max(1, round(hours * 60))} minutes"
+    return f"about {round(hours)} hour{'s' if round(hours) != 1 else ''}"
 
 # How important each kind of social event is when posted to the stage.
 SOCIAL_IMPORTANCE = {"help": 0.65, "ask_why": 0.55, "explain": 0.5, "lesson": 0.55,
@@ -75,8 +83,8 @@ SOCIAL_IMPORTANCE = {"help": 0.65, "ask_why": 0.55, "explain": 0.5, "lesson": 0.
 class Mind:
     def __init__(self, tick_seconds: float = TICK_SECONDS, rng=None, idle_after: float = IDLE_AFTER):
         self.nanites = load_all()
-        self.wake_up()                     # energy back for the time the app was closed
         self.moiragen = Moiragen.load()
+        self.wake_up("while the app was closed")   # energy back, and a note in every memory
         self.journal = Journal()
         self.body = Body(self.nanites)
         self.stage = Stage()
@@ -183,7 +191,7 @@ class Mind:
         self.active = now
         if now:
             text = "You're back, so the nanites carry on living."
-            self.wake_up()                 # energy back for the time they rested
+            self.wake_up("while nobody was using the app")   # energy back for the time they rested
         else:
             text = (f"Nobody has used the app for {self.idle_after / 60:.0f} minutes, so the "
                     f"nanites rest until you're back. Only the body keeps watch.")
@@ -191,17 +199,28 @@ class Mind:
         self.emit("presence", active=now, text=text)
         self._vitals()
 
-    def wake_up(self) -> str:
+    def wake_up(self, where: str = "while the app was closed") -> str:
         """The nanites wake from sleep (the app was closed, or nobody used it).
-        Each gets energy back for the hours since it was last awake (Nanite.sleep).
+        Each gets energy back for the hours since it was last awake (Nanite.sleep),
+        and every nanite and Moiragen get a short note in their own memory
+        ("I slept for about 3 hours while the app was closed."), so they know
+        what happened instead of having to guess.
         Returns what happened, in words ("" if nobody slept long enough to notice)."""
         gains, hours = [], 0.0
         for n in self.nanites.values():
-            hours = max(hours, n.hours_asleep())
-            gained = n.sleep(n.hours_asleep())
+            slept = n.hours_asleep()
+            hours = max(hours, slept)
+            gained = n.sleep(slept)
             if gained >= 1:
                 gains.append(f"{n.name} +{gained:.0f} (now {n.energy:.0f})")
+            if slept >= SLEEP_NOTE_HOURS:
+                n.remember("slept", f"I slept for {how_long(slept)} {where}, and woke up with "
+                                    f"energy {n.energy:.0f}.", hours=round(slept, 2))
             n.save()                           # awake from now on
+        if hours >= SLEEP_NOTE_HOURS:
+            self.moiragen.remember("slept", f"I slept for {how_long(hours)} {where}. My nanites "
+                                            f"slept too and woke up rested.", hours=round(hours, 2))
+            self.moiragen.save()
         if not gains:
             return ""
         text = f"The nanites slept about {hours:.1f} hours and got energy back: {', '.join(gains)}."
