@@ -25,7 +25,7 @@ The moment you are back, everything carries on.
 
 Sleep: the time the nanites spent resting, or with the app closed, counts
 as sleep. When Moiragen starts, and when you come back, each nanite gets
-energy back for the hours it slept (see Nanite.sleep: 20 an hour, at most
+energy back for the hours it slept (see Nanite.sleep: 40 an hour, at most
 8 hours counted, never above full).
 
 The inner-life journal (journal.py) starts and stops with him, so it keeps

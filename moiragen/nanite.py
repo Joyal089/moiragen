@@ -21,7 +21,7 @@ NANITE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Sleep: while the app is closed (or nobody uses it), the nanites sleep and
 # their energy slowly comes back, like a night's sleep.
-SLEEP_ENERGY_PER_HOUR = 20   # 40 -> 100 takes three hours
+SLEEP_ENERGY_PER_HOUR = 40   # 30 -> 70 takes one hour; empty -> full takes 2.5 hours
 SLEEP_MAX_HOURS = 8          # sleep longer than this counts as 8 hours (a full night)
 
 # The three thinking nanites. ids are used for file names; display names

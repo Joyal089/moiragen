@@ -1,7 +1,7 @@
 """Step 14 check: sleep, and the journal that keeps recording.
 
   1. Sleep: energy comes back for the time the app was closed (or nobody
-     used it), 20 an hour, at most 8 hours counted, never above full.
+     used it), 40 an hour, at most 8 hours counted, never above full.
   2. It happens when Moiragen starts, and when you come back after a rest.
   3. The inner-life journal starts with Moiragen, catches up on everything
      written while it was not running, never writes anything twice, and
@@ -48,7 +48,7 @@ def set_asleep(energies: dict, hours: float) -> None:
 nanites = load_all()
 one = nanites["nanite_one"]
 one.energy = 40
-assert one.sleep(1.5) == 1.5 * SLEEP_ENERGY_PER_HOUR and one.energy == 70
+assert one.sleep(0.5) == 0.5 * SLEEP_ENERGY_PER_HOUR and one.energy == 40 + 0.5 * SLEEP_ENERGY_PER_HOUR
 one.energy = 10
 assert one.sleep(30) == min(90, SLEEP_MAX_HOURS * SLEEP_ENERGY_PER_HOUR) and one.energy == 100, \
     "a long sleep fills energy, never above full"
@@ -74,13 +74,13 @@ assert 2.99 < Nanite.load("nanite_two").hours_asleep() < 3.01
 print(f"[ok] Sleep: {SLEEP_ENERGY_PER_HOUR} energy an hour, at most {SLEEP_MAX_HOURS} hours, never above full")
 
 # ---------------- 2. On start, and when you come back ----------------
-set_asleep({"nanite_one": 40, "nanite_two": 45, "nanite_three": 100}, hours=2)
+set_asleep({"nanite_one": 40, "nanite_two": 45, "nanite_three": 100}, hours=0.5)
 mind = Mind(tick_seconds=0.05, idle_after=0.3)
 # Times are stored to the second, so a sleep can be a moment longer: allow 0.1 energy.
 e = {n.id: round(n.energy) for n in mind.nanites.values()}
-assert e == {"nanite_one": 80, "nanite_two": 85, "nanite_three": 100}, e
+assert e == {"nanite_one": round(40 + 0.5 * SLEEP_ENERGY_PER_HOUR), "nanite_two": round(45 + 0.5 * SLEEP_ENERGY_PER_HOUR), "nanite_three": 100}, e
 assert all(n.hours_asleep() < 0.01 for n in mind.nanites.values()), "awake now"
-print(f"[ok] App closed for 2 hours: energy {e}")
+print(f"[ok] App closed for half an hour: energy {e}")
 
 # Nobody uses the app: they rest. Pretend that rest lasted an hour, then come back.
 time.sleep(0.4)
@@ -92,7 +92,7 @@ events = []
 mind.subscribe(events.append)
 mind.touch()
 mind._check_presence()
-assert mind.active and all(abs(n.energy - 70) < 0.1 for n in mind.nanites.values())
+assert mind.active and all(abs(n.energy - (50 + SLEEP_ENERGY_PER_HOUR)) < 0.1 for n in mind.nanites.values())
 assert any("slept about 1.0 hours" in x.get("text", "") for x in events)
 print(f"[ok] Back after an hour's rest: {[x['text'] for x in events if 'slept' in x.get('text', '')][0]}")
 
@@ -114,7 +114,7 @@ mind.journal.start()
 text = jfile.read_text(encoding="utf-8")
 for must in ["A first quiet thought", "Correction (Nanite Two)", "I only say what really happened",
              "Moiragen compared: They differ", "Calculator check: 42", "first he picked Nanite Two",
-             "The nanites slept about 2.0 hours", "caught up on"]:
+             "The nanites slept about 0.5 hours", "caught up on"]:
     assert must in text, f"missing from the journal: {must}"
 assert "I learned to check" not in text, "lessons from decisions come from social_lesson, not twice"
 
