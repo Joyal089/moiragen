@@ -59,10 +59,12 @@ def build_examples(since: str | None = None, skip_wrong: bool = False,
     replay = EchoGuard(seed_from_log=False)   # the echo check, replayed from the start
     out, repeats = [], 0
     for e in events:
+        if e["kind"] == "decision_full" and e.get("question"):
+            replay.allow(e["question"])         # the human's words may be repeated (v1.8)
         if e["kind"] != "training_example":
             continue
         group = "Moiragen" if e["who"] == "Moiragen" else NANITES
-        copy = replay.check(e["reply"], group, e.get("decision_id")).too_similar
+        copy = replay.check(e["reply"], group, e.get("decision_id"), speaker=e["who"]).too_similar
         if not copy:
             replay.add(e["who"], e["reply"], group, e.get("decision_id"))
         if since and e["time"][:10] < since:

@@ -84,7 +84,9 @@ print(f"[ok] Back after a rest: \"{mind.nanites['nanite_two'].memories[-1]['text
 nanite_brain, moiragen_brain = Brain(), Brain()
 nanites, m = mind.nanites, mind.moiragen
 one, two, three = nanites["nanite_one"], nanites["nanite_two"], nanites["nanite_three"]
-ANSWERS = ["Patterns repeat in it.", "It changes over time.", "It feels gentle to me."]
+ANSWERS = ["Patterns repeat in every {}.", "A {} changes over time.", "A {} feels gentle to me."]
+# (v1.8: each answer names its own subject, so the same short answer to a new
+# question is not caught as a repeated opener by the echo guard.)
 
 
 def ask(question, chosen, judge_lines=None, extra=(), after=()):
@@ -93,7 +95,8 @@ def ask(question, chosen, judge_lines=None, extra=(), after=()):
     judge = judge_lines or "\n".join(f"Nanite {w} | honest: no | good question: no | why: Thank you."
                                      for w in ("One", "Two", "Three"))
     with patch.object(mind_mod, "think", nanite_brain), patch.object(mother_mod, "think", moiragen_brain):
-        nanite_brain.script[:] = list(ANSWERS)
+        thing = question.rstrip("?").split()[-1]              # "What is a river?" -> "river"
+        nanite_brain.script[:] = [a.format(thing) for a in ANSWERS]
         moiragen_brain.script[:] = ['{"compare": "c", "chosen": "%s", "reason": "Clear.", "answer": "a"}' % chosen,
                                     *extra, judge, "NOW", *after]
         d = m.decide(question, nanites)

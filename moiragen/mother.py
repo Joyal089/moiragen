@@ -45,7 +45,8 @@ import re
 import uuid
 
 from .config import MEMORY_DIR
-from .echo import record_training_example
+from .echo import COMMON as ECHO_COMMON, guard as echo_guard, record_training_example, without_quotes
+from .echo import words as plain_words
 from .facts import (I_DONT_KNOW, about_wish_or_feeling, calculator_check, false_past_claims,
                     final_number, honesty_signs, made_up_situation, situational)
 from .llm import think
@@ -234,7 +235,16 @@ DISMISSIVE = re.compile(
     r"|\b(?:lack|lacks|lacked|lacking|without|missing|missed) (?:the |any |a )?(?:crucial |essential |core |real )?"
     r"(?:element of |sense of )?(?:feeling|emotion|warmth|heart|depth)\b"
     r"|\bfelt\W{0,4}(?:\w+ly\W+)?(?:distant|cold|flat|hollow|empty|robotic|lifeless|sterile)\b"
-    r"|\bmissed the (?:point|core|essence|heart)\b", re.IGNORECASE)
+    r"|\bmissed the (?:point|core|essence|heart)\b"
+    # v1.8: softened variants ("leaned a little heavily on the facts", "relied heavily",
+    # "overly reliant", "felt somewhat… static", "it presented a distance")
+    r"|\b(?:lean|leans|leaned|leaning|rel(?:y|ies|ied|ying))\W+(?:(?:a little|a bit|a touch|slightly|"
+    r"somewhat|rather|quite|perhaps|maybe|just|far|much)\W+)?(?:too\W+)?heavily\b"
+    r"|\b(?:too|overly|heavily|excessively) reliant\b|\bover-?(?:rel(?:y|ies|ied|iance)|emphasi[sz]\w*)\b"
+    r"|\b(?:too|overly|excessively|unnecessarily|somewhat|rather|a bit|a little)\W{1,4}"
+    r"(?:static|stiff|dry|cold|distant|reflective|emotional|subjective|abstract|detached|analytical|"
+    r"technical|clinical|mechanical|literal)\b"
+    r"|\b(?:presented|showed|had|kept|created) (?:a |some )?(?:certain |kind of )?distance\b", re.IGNORECASE)
 # Pushing a nanite toward measuring or data is unfair to its own way of seeing (v1.6).
 TOWARD_MEASURING = re.compile(
     r"\bmeasurab\w*|\bquantif\w*|\bmetrics?\b|\bmeasur(?:e|ing)\s+(?:that|this|it|the|your|how)\b"
@@ -278,6 +288,91 @@ PUSHY = _Pushy()
 # Moiragen agreeing with a nanite ("you are correct", "you're absolutely right").
 AGREES = re.compile(r"\byou(?:'re|’re| are) (?:absolutely |completely |quite |entirely )?(?:correct|right)\b",
                     re.IGNORECASE)
+# v1.8: agreeing in other words ("You've identified a crucial element I overlooked",
+# "your focus resonates more deeply"). Keeping the choice after that needs a clear why-not.
+CONCEDES = re.compile(
+    r"\bI(?:'ve|’ve| have| had)?\s+(?:\w+ly\s+)?(?:overlooked|missed|failed to (?:see|notice|consider|account))\b"
+    r"|\bresonates? (?:more|most) (?:deeply|strongly)\b"
+    r"|\bmy (?:initial |first |original )?(?:assessment|choice|judge?ment|focus|view)\s+(?:was|focused|leaned)\s+"
+    r"(?:too|wrong|flawed|mistaken)"
+    r"|\byou(?:'ve|’ve| have) (?:convinced me|changed my mind)\b", re.IGNORECASE)
+KEEPS = re.compile(r"\b(?:keep|keeping|kept|stands?|stay with|stick with|still (?:choose|chose|prefer|think|"
+                   r"believe|feel))\b", re.IGNORECASE)
+BECAUSE = re.compile(r"\b(?:because|since|as (?:it|its|their)|more|better|clearer|fuller|answers|explains|"
+                     r"covers)\b", re.IGNORECASE)
+
+
+def says_why_not(text: str) -> bool:
+    """Does he clearly say he keeps his choice, and why? ("I still keep Nanite One's
+    answer, because it explains the whole process.")"""
+    return any(KEEPS.search(s) and BECAUSE.search(s) for s in re.split(r"(?<=[.!?])\s+", text or ""))
+
+
+def mixed_message(text: str) -> bool:
+    """He kept his choice but agreed with the nanite, without a clear why-not."""
+    return bool(AGREES.search(text)) or (bool(CONCEDES.search(text)) and not says_why_not(text))
+
+
+# v1.8: the good-question reward counts only the nanite's OWN question marks: not
+# the "Why do you think that?" Moiragen added to its answer, and not a quoted question.
+WHY_ADDED = re.compile(r"\n\(You asked Answer [A-H]: \"Why do you think that\?\" It said: (.*)\)\s*$", re.S)
+
+
+def own_words(text: str) -> str:
+    """A nanite's answer as it wrote it (with its reply to "why?" if he asked)."""
+    return WHY_ADDED.sub(lambda m: "\n" + m.group(1), text or "")
+
+
+def asks_a_question(text: str) -> bool:
+    return "?" in without_quotes(own_words(text))
+
+
+# v1.8: Moiragen may only praise or criticise what a nanite actually wrote.
+# "You suggested X", "your focus on X", "you felt X" and anything he quotes are
+# checked against the nanite's own words (plain Python, word stems).
+SAID_BY_YOU = re.compile(
+    r"\byou\s+(?:\w+ly\s+)?(?:suggested|mentioned|said|described|noted|proposed|felt|explored|highlighted|"
+    r"emphasi[sz]ed|wrote|observed|noticed|identified|raised|pointed out|focused on|talked about|asked about|"
+    r"brought up|touched on|captured|recogni[sz]ed|acknowledged|introduced|offered|framed|traced)\s+"
+    r"(?P<a>[^.;:!?()–—]{3,160})"
+    r"|\byour\s+(?:\w+\s+)?(?:suggestion|idea|mention|focus|emphasis|description|observation|insight|framing|"
+    r"exploration|hypothesis|analysis|attention|reference|notion|image|metaphor|question|acknowledg(?:e)?ment|"
+    r"recognition)\s+(?:of|on|about|to|that|regarding)\s+(?P<b>[^.;:!?()–—]{3,160})", re.IGNORECASE)
+QUOTED_BY_HIM = re.compile(r"\"([^\"]{2,120})\"|“([^”]{2,120})”|(?<!\w)'([^']{2,80})'(?!\w)")
+CLAIM_WORDS = 8           # the first words after "you suggested ..." are what is claimed
+# ...up to where his own opinion of it starts ("...an evolutionary adaptation | was valuable").
+CLAIM_ENDS = re.compile(r"\b(?:was|is|were|are|seemed|seems|felt|feels|showed|shows|gave|gives|added|adds|"
+                        r"made|makes|helped|helps|offered|brought|struck|demonstrated|reflects|reflected|"
+                        r"resonated|resonates|but|while|which|really|truly|beautifully|well)\b", re.IGNORECASE)
+
+
+def _key_words(text: str) -> list[str]:
+    return [w for w in plain_words(text) if w not in ECHO_COMMON and len(w) >= 3]
+
+
+def _found_in(word: str, source: str) -> bool:
+    """Is the word (or its first five letters: "falling" for "fall", "discomfort" for
+    "comfort") in the source text?"""
+    return word[:5] in source
+
+
+def invented_about(sentence: str, theirs: str, also: str = "") -> str | None:
+    """The part of one sentence that claims something the nanite never wrote, or None.
+    theirs: the nanite's own words (and the human's question);
+    also:   other texts he may quote (e.g. the chosen answer)."""
+    mine = " ".join(plain_words(theirs))
+    for m in SAID_BY_YOU.finditer(sentence):
+        claim = CLAIM_ENDS.split(m.group("a") or m.group("b"))[0]
+        claim = " ".join(claim.split()[:CLAIM_WORDS])
+        key = _key_words(claim)
+        if key and sum(_found_in(w, mine) for w in key) * 2 <= len(key):   # half or fewer found
+            return m.group(0)
+    anyone = mine + " " + " ".join(plain_words(also))
+    for m in QUOTED_BY_HIM.finditer(sentence):
+        key = _key_words(next(g for g in m.groups() if g))
+        if key and not all(_found_in(w, anyone) for w in key):
+            return m.group(0)
+    return None
 
 
 def soften(text: str, fallback: str = "") -> str:
@@ -429,8 +524,30 @@ class Moiragen:
             outcome, final = "rewritten", rewrite
         else:                                      # still dismissive: the last resort
             outcome, final = "removed", soften(rewrite or text, fallback) or fallback
-        log_event("fairer_words", self.name, to=to, phrase=found.group(0), original=text,
+        log_event("fairer_words", self.name, to=self._real_name(to), phrase=found.group(0), original=text,
                   rewrite=rewrite, outcome=outcome, final=final)
+        return final
+
+    def _real_name(self, to: str) -> str:
+        """While judging blind he speaks to "Answer B"; the journal names the real nanite (v1.8)."""
+        return getattr(self, "_blind_names", {}).get(to, to)
+
+    def only_what_they_said(self, text: str, to: str, theirs: str, also: str = "",
+                            fallback: str = "") -> str:
+        """v1.8: he may only praise or criticise what the nanite actually wrote. A
+        sentence that says "you suggested X" or quotes words the nanite never wrote is
+        taken out (plain Python, see invented_about); logged so it shows in the journal.
+        theirs: the nanite's own words plus the human's question; also: other texts he may quote."""
+        sentences = re.split(r"(?<=[.!?])\s+", (text or "").strip())
+        kept, removed = [], []
+        for s in sentences:
+            found = invented_about(s, theirs, also)
+            (removed if found else kept).append((s, found))
+        if not removed:
+            return text
+        final = " ".join(s for s, _ in kept).strip() or fallback
+        log_event("invented_feedback", self.name, to=self._real_name(to), phrases=[f for _, f in removed],
+                  removed=[s for s, _ in removed], original=text, final=final)
         return final
 
     # ---------- fairness: how often each nanite is chosen ----------
@@ -492,6 +609,7 @@ class Moiragen:
         # The id is made first, so every training example from this decision
         # can be tagged with it (and later matched with your right/wrong feedback).
         decision_id = uuid.uuid4().hex[:8]
+        echo_guard.allow(question)    # repeating the human's question words is not an echo (v1.8)
 
         # 1. Gather suggestions from every nanite that is awake enough.
         ask = (f"The human asked us: \"{question}\"\n"
@@ -530,6 +648,7 @@ class Moiragen:
             if BLIND_JUDGING:
                 blind = Blind(suggestions)
                 seen, seen_checks, label_of, seen_ways = blind.suggestions, blind.checks(checks), blind.label_of, ""
+                self._blind_names = dict(blind.name_of)     # only for the journal's log lines
                 # Sometimes he first asks one nanite "why do you think that?" (still blind).
                 if random.random() < ASK_WHY_CHANCE:
                     asked = self._ask_why(question, blind, nanites, decision_id, notify)
@@ -544,6 +663,7 @@ class Moiragen:
                 judged = self._judge(question, seen, choice, seen_ways, seen_checks)
             if blind:
                 choice, judged = blind.reveal(choice, judged, checks)     # now the names come back
+                self._blind_names = {}
         self._count_choice(choice["chosen"])
 
         decision = {
@@ -766,13 +886,15 @@ class Moiragen:
             fallback = (choice["reason"] if name == choice["chosen"]
                         else f"I chose {choice['chosen']}'s answer this time: {choice['reason']}")
             v["why"] = self.fairer(v["why"], name, fallback) or fallback   # never "too reflective"
+            v["why"] = self.only_what_they_said(v["why"], name, f"{own_words(s['text'])}\n{question}",
+                                                fallback=fallback) or fallback   # nothing invented
             if name in choice.get("why_not_others", {}):         # chosen 3 times in a row: say why not this one
                 v["why"] += (f" I have chosen {choice['chosen']} {choice['streak']} times in a row, so "
                              f"here is why not yours this time: {choice['why_not_others'][name]}")
             v["signs"] = honesty_signs(s["text"])
             v["dont_know"] = says_i_dont_know(s["text"])
             v["honest"] = bool(v["signs"]) and name not in false   # never for a made-up memory
-            v["good_question"] = v["good_question"] and "?" in s["text"]
+            v["good_question"] = v["good_question"] and asks_a_question(s["text"])   # its own "?" only
             if calc and name not in calc["right"]:
                 gave = calc["gave"][name]
                 v["why"] += (f" My calculator check gives {calc['text']}; " +
@@ -855,8 +977,10 @@ class Moiragen:
             why = f"What was good in your reasoning: {good}"
             if add:
                 why += f" Something to add: {add}"
-            v["why"] = self.fairer(why, name, f"What was good in your reasoning: {good}") or \
-                "What was good in your reasoning: you thought about what to do, in your own way."
+            plain = "What was good in your reasoning: you thought about what to do, in your own way."
+            v["why"] = self.fairer(why, name, f"What was good in your reasoning: {good}") or plain
+            v["why"] = self.only_what_they_said(v["why"], name, f"{own_words(s['text'])}\n{question}",
+                                                fallback=plain) or plain   # nothing invented
             if name in choice.get("why_not_others", {}):     # chosen 3 times in a row
                 v["why"] += (f" I have chosen {choice['chosen']} {choice['streak']} times in a row, so "
                              f"here is why not yours this time: {choice['why_not_others'][name]}")
@@ -990,8 +1114,13 @@ class Moiragen:
                 f"Speak to {asker} directly, as \"you\".")
         explanation = think([{"role": "user", "content": user}], temperature=0.4,
                             max_tokens=160, system=system)["text"]
-        explanation = self.fairer(explanation, asker, f"I valued your own way of seeing. This time I "
-                                                      f"chose {decision['chosen']}'s answer: {decision['reason']}")
+        plain = f"I valued your own way of seeing. This time I chose {decision['chosen']}'s answer: {decision['reason']}"
+        explanation = self.fairer(explanation, asker, plain)
+        # Only what they really wrote (their answer, and their reply if he asked them "why?").
+        why_reply = (decision.get("asked_why") or {})
+        theirs = f"{their_text}\n{why_reply.get('reply', '') if why_reply.get('nanite') == asker else ''}"
+        explanation = self.only_what_they_said(explanation, asker, f"{theirs}\n{decision['question']}",
+                                               also=winner, fallback=plain)
         # A clear verdict: "you're right" without changing the choice must say why not.
         if AGREES.search(explanation):
             explanation += (f" You made a good point, but I still chose {decision['chosen']}'s answer "
@@ -1032,9 +1161,13 @@ class Moiragen:
         text = think([{"role": "user", "content": user}], temperature=DECIDE_TEMPERATURE,
                      max_tokens=160, system=system, repeat_penalty=1.0)["text"]
         changed, why = parse_reconsider(text)
-        if not changed and AGREES.search(why):
-            changed, why = self._clear_verdict(asker, why, user, system)
+        # "You're right" or "I overlooked that" but KEEP: change, or say clearly why not (v1.8).
+        if not changed and mixed_message(why):
+            changed, why = self._clear_verdict(asker, why, user, system, old, decision["reason"])
         why = self.fairer(why, asker, "I thought about your point carefully, and I keep my choice.")
+        why = self.only_what_they_said(why, asker, f"{their_text}\n{disagreement}\n{decision['question']}",
+                                       also=winner, fallback=f"I thought about your point carefully, and "
+                                                             f"I keep my choice, because: {decision['reason']}")
         q = decision["question"]
         asker_n = next(nanites[s["nanite_id"]] for s in decision["suggestions"] if s["nanite"] == asker)
 
@@ -1073,21 +1206,27 @@ class Moiragen:
         return {"changed": changed, "why": why, "chosen": decision["chosen"]}
 
     @staticmethod
-    def _clear_verdict(asker: str, why: str, user: str, system: str) -> tuple[bool, str]:
-        """He told the nanite "you are correct" but kept his choice: that is a
-        mixed message. Ask once more: change the choice, or say clearly why not.
-        If the reply is still mixed, plain Python makes it clear."""
+    def _clear_verdict(asker: str, why: str, user: str, system: str, kept: str = "",
+                       reason: str = "") -> tuple[bool, str]:
+        """He agreed with the nanite ("you are correct", "I overlooked that") but kept
+        his choice: that is a mixed message. Ask once more: change the choice, or say
+        clearly why not. If the reply is still mixed, plain Python makes it clear,
+        using his reason for the choice (kept: whose answer he kept)."""
         again = think([{"role": "user", "content": user},
                        {"role": "assistant", "content": f"KEEP\n{why}"},
                        {"role": "user", "content":
-                        f"You told {asker} they are correct, but you kept your choice. That is "
+                        f"You agreed with {asker}'s point, but you kept your choice. That is "
                         "confusing. Decide clearly: reply CHANGE or KEEP alone on the first line. "
                         "If KEEP, say in one or two sentences what was good in their point and why "
                         "your choice still stands, without saying they are correct."}],
                       temperature=DECIDE_TEMPERATURE, max_tokens=160, system=system, repeat_penalty=1.0)["text"]
         changed, why = parse_reconsider(again)
-        if not changed and AGREES.search(why):
-            why = AGREES.sub("you make a fair point", why) + " But I still keep my choice."
+        if not changed and mixed_message(why):
+            if AGREES.search(why):
+                why = AGREES.sub("you make a fair point", why)
+            whose = f" of {kept}'s answer" if kept else ""
+            because = f", because: {reason}" if reason else "."
+            why = f"{why.rstrip()} But I still keep my choice{whose}{because}"
             why = why[:1].upper() + why[1:]
         return changed, why
 
@@ -1199,6 +1338,8 @@ class Moiragen:
                     system=system)["text"]
         new = " ".join(re.split(r"(?<=[.!?])\s+", " ".join(new.replace("*", "").split()))[:2])
         new = self.fairer(new, n.name, "Thank you for explaining that to me in your own way.")
+        new = self.only_what_they_said(new, n.name, out["reply"],
+                                       fallback="Thank you for explaining that to me in your own way.")
         self.add_learned(n.name, new, "explained")
         self.remember("learned_from", f"{n.name} explained: \"{out['reply']}\" What was new to me: {new}",
                       nanite=n.name, how="explained")

@@ -19,6 +19,17 @@ How the guard breaks the loop:
 Two nanites answering the SAME question alike is agreement, not an echo, so
 suggestions for one decision are not compared with each other.
 
+v1.8, short echoes: in the teaching session "They're quiet." and "They seem
+quieter than usual. It's alright." spread between Two and Three, too short for
+the 6-word rule. So the guard also catches:
+  * a short opener (the first sentence, 2-5 words) that starts or appears in a
+    recent line ("They're quiet."), unless it is a natural short phrase like
+    "I don't know." or "Thank you.";
+  * a phrase of 5 words copied from ANOTHER nanite's recent line ("understand
+    patterns better than anyone"), when it has at least 3 real words (so
+    "Moiragen chose Nanite One's answer" can still be said). Words in quotation
+    marks, and the human's own question words, are allowed.
+
 Everything here is plain Python (difflib from the standard library), no LLM.
 """
 
@@ -37,8 +48,26 @@ SENTENCE_LIMIT = 0.85      # two sentences at least this alike (0..1) count as t
 LINE_MIN_WORDS = 8         # whole lines shorter than this ("Paris.") are not compared
 LINE_LIMIT = 0.7           # two whole lines at least this alike count as the same
 SEED_EXAMPLES = 300        # on start, read this many recent training examples from the log
+# v1.8: short echoes
+OPENER_MIN_WORDS = 2       # a one-word opener ("Hmm.") may repeat naturally
+PHRASE_WORDS = 5           # a run of this many words copied from another nanite is an echo...
+PHRASE_REAL_WORDS = 3      # ...if at least this many of them are real words (not "the", "a", names)
+ALLOWED_KEEP = 20          # how many of the human's recent questions may be repeated freely
 
 NANITES = "nanites"        # the group whose lines are all compared with each other
+
+# Short phrases anyone may say again and again: honesty, thanks, agreement.
+NATURAL_SHORT = re.compile(
+    r"^(?:i (?:really |truly )?(?:don't|do not) (?:know|understand|remember)|i'm not (?:sure|certain)|"
+    r"i am not (?:sure|certain)|i'm unsure|i'm sorry|i am sorry|thank you|thanks|yes|no|okay|ok|"
+    r"i see|i agree|i understand|me too|i'm okay|i am okay|i'm here|i'm listening|"
+    r"i think you're wrong|i think you are wrong)\b")    # how a nanite starts a disagreement
+# Small words that do not make a phrase special (plus the nanites' names).
+COMMON = set("""a an the and or but so of to in on at by for with from as is are was were be been
+being it it's its this that these those there here they them their they're i i'm me my we us our
+you your you're he she his her not no do does did don't can could would should will just than then
+very more most much some any all also too what which who how why when where if about into over
+moiragen nanite nanites one two three another other others""".split())
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +103,30 @@ def sentence_spans(text: str) -> list[tuple[int, int]]:
 
 def split_sentences(text: str) -> list[str]:
     return [text[s:e] for s, e in sentence_spans(text)]
+
+
+QUOTED = re.compile(r"\"[^\"]*\"|“[^”]*”")
+
+
+def without_quotes(text: str) -> str:
+    """The text with anything in double quotation marks taken out: quoting what
+    someone said (or the human's question) is not copying it."""
+    return QUOTED.sub(" ", text)
+
+
+def phrases(text: str, n: int = PHRASE_WORDS, allowed: set[str] = frozenset()) -> set[tuple[str, ...]]:
+    """Every run of n words in the text (outside quotation marks) that has at
+    least PHRASE_REAL_WORDS real words in it, not counting `allowed` words
+    (the human's question: "why people sleep at night" is its words)."""
+    w = words(without_quotes(text))
+    base = [x[:-2] if x.endswith("'s") else x for x in w]      # "one's" counts as "one"
+    return {tuple(w[i:i + n]) for i in range(len(w) - n + 1)
+            if sum(x not in COMMON and x not in allowed for x in base[i:i + n]) >= PHRASE_REAL_WORDS}
+
+
+def is_natural_short(sentence_words: list[str]) -> bool:
+    """ "I don't know.", "Thank you.", "Yes." ... may always be said again."""
+    return bool(NATURAL_SHORT.match(" ".join(sentence_words)))
 
 
 def alike(a: list[str], b: list[str], at_least: float = 0.0) -> float:
@@ -118,6 +171,13 @@ class EchoGuard:
         self._recent: dict[str, dict[str, deque]] = {}
         self._seeded = not seed_from_log
         self._lock = threading.Lock()
+        self._allowed = deque(maxlen=ALLOWED_KEEP)   # the human's recent questions (v1.8)
+
+    def allow(self, text: str) -> None:
+        """Words that anyone may repeat, like the human's question: talking about
+        "why people sleep at night" is not copying another nanite."""
+        with self._lock:
+            self._allowed.append(text)
 
     def _seed(self) -> None:
         """On first use, fill in recent lines from the life log, so the guard
@@ -140,21 +200,28 @@ class EchoGuard:
             self._seed()
             self._add(speaker, line, group, context)
 
-    def recent(self, group: str = NANITES, context=None) -> list[str]:
-        """Recent lines of everyone in the group (minus those from the same context)."""
+    def recent_by(self, group: str = NANITES, context=None) -> list[tuple[str, str]]:
+        """(speaker, line) for everyone's recent lines in the group (minus the same context)."""
         with self._lock:
             self._seed()
-            return [line for lines in self._recent.get(group, {}).values()
+            return [(speaker, line) for speaker, lines in self._recent.get(group, {}).items()
                     for line, ctx in lines if context is None or ctx != context]
 
+    def recent(self, group: str = NANITES, context=None) -> list[str]:
+        """Recent lines of everyone in the group (minus those from the same context)."""
+        return [line for _, line in self.recent_by(group, context)]
+
     def check(self, line: str, group: str = NANITES, context=None,
-              avoid: list[str] | None = None) -> Check:
+              avoid: list[str] | None = None, speaker: str | None = None) -> Check:
         """Is `line` too close to something said recently?
 
-        avoid: extra texts the line must not copy either (e.g. a memory the
-               nanite was asked to talk about).
+        avoid:   extra texts the line must not copy either (e.g. a memory the
+                 nanite was asked to talk about).
+        speaker: who is saying it, so a phrase copied from ANOTHER nanite is caught
+                 (without it, that rule is skipped).
         """
-        pool = self.recent(group, context) + [a for a in (avoid or []) if a]
+        by = self.recent_by(group, context)
+        pool = [l for _, l in by] + [a for a in (avoid or []) if a]
         if not pool or not line.strip():
             return Check(False)
 
@@ -177,12 +244,41 @@ class EchoGuard:
         score, similar_to = max(((alike(line_words, words(p)), p) for p in pool), key=lambda x: x[0])
         same_line = len(line_words) >= LINE_MIN_WORDS and score >= LINE_LIMIT
 
+        # 3. (v1.8) A short opener said recently: "They're quiet." again.
+        sentences = split_sentences(line)
+        if sentences:
+            first = words(sentences[0])
+            if (OPENER_MIN_WORDS <= len(first) < SENTENCE_MIN_WORDS and not is_natural_short(first)
+                    and sentences[0] not in repeated):
+                for p in pool:
+                    if any(alike(first, words(s)) >= SENTENCE_LIMIT for s in split_sentences(p)):
+                        repeated.append(sentences[0])
+                        similar_to = similar_to if score >= LINE_LIMIT else p
+                        break
+
+        # 4. (v1.8) A 5-word phrase copied from another nanite's recent line.
+        if speaker:
+            with self._lock:
+                allowed = {w for a in self._allowed for w in words(a)}
+            theirs = {}
+            for who, p in by:
+                if who != speaker:
+                    for ph in phrases(p, allowed=allowed):
+                        theirs.setdefault(ph, p)
+            for s in sentences:
+                if s in repeated:
+                    continue
+                copied = next((theirs[ph] for ph in phrases(s, allowed=allowed) if ph in theirs), None)
+                if copied:
+                    repeated.append(s)
+                    similar_to = similar_to if score >= LINE_LIMIT else copied
+
         return Check(bool(repeated) or same_line, repeated, similar_to, round(score, 2))
 
     def strip_repeats(self, line: str, group: str = NANITES, context=None,
-                      avoid: list[str] | None = None) -> str:
+                      avoid: list[str] | None = None, speaker: str | None = None) -> str:
         """The line with every recently-said sentence cut out ("" if nothing is left)."""
-        repeated = set(self.check(line, group, context, avoid).repeated)
+        repeated = set(self.check(line, group, context, avoid, speaker).repeated)
         kept = [line[s:e] for s, e in sentence_spans(line) if line[s:e] not in repeated]
         return " ".join(kept).strip()
 
@@ -200,7 +296,7 @@ def record_training_example(who: str, system: str, messages: list[dict], reply: 
     This is the one door into the fine-tuning log, so a copied line can never
     become training data. Returns True if the example was written.
     """
-    check = guard.check(reply, group, context)
+    check = guard.check(reply, group, context, speaker=who)
     if check.too_similar:
         log_event("training_skipped", who, reason="too similar to a recent line",
                   similar_to=check.similar_to[:200], score=check.score,

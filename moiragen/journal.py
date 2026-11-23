@@ -73,6 +73,11 @@ def render(e: dict) -> str | None:
                      f"was removed. What {e.get('to')} heard: \"{clean(e.get('final'))}\"")
         return (f"- {at} **Fairer words:** Moiragen was about to tell {e.get('to')} \"{clean(e.get('original'))}\". "
                 f"Gentle note on \"{e.get('phrase')}\": this dismisses a way of seeing. Then {done}")
+    if k == "invented_feedback":     # v1.8: he described words the nanite never wrote
+        gone = " ".join(f"\"{clean(s)}\"" for s in e.get("removed", []))
+        return (f"- {at} **Only what they wrote:** Moiragen was about to tell {e.get('to')} {gone}, but "
+                f"{e.get('to')} never wrote that, so it was taken out. What {e.get('to')} heard: "
+                f"\"{clean(e.get('final'))}\"")
     if k == "correction":
         return f"- {at} **Correction ({who}):** {clean(e.get('text'))}"
     # v1.7: what Moiragen learned from a nanite (a calculator lesson is written inside its decision)

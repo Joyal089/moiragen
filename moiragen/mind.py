@@ -119,7 +119,7 @@ def speak_freshly(n: Nanite, system: str, messages: list[dict], temperature: flo
                        max_tokens=max_tokens, system=system)
         seconds += result["seconds"]
         reply = result["text"]
-        check = guard.check(reply, NANITES, context, avoid)
+        check = guard.check(reply, NANITES, context, avoid, speaker=n.name)
         if not check.too_similar:
             return reply, seconds
         # Rejected: logged (never saved as a memory or as training data).
@@ -127,8 +127,8 @@ def speak_freshly(n: Nanite, system: str, messages: list[dict], temperature: flo
                   score=check.score, attempt=attempt + 1)
         convo = messages + [{"role": "assistant", "content": reply},
                             {"role": "user", "content": check.nudge()}]
-    rest = guard.strip_repeats(reply, NANITES, context, avoid)
-    if rest and not guard.check(rest, NANITES, context, avoid).too_similar:
+    rest = guard.strip_repeats(reply, NANITES, context, avoid, speaker=n.name)
+    if rest and not guard.check(rest, NANITES, context, avoid, speaker=n.name).too_similar:
         return rest, seconds
     return None, seconds
 
