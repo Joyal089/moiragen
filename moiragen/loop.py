@@ -23,6 +23,14 @@ social moments, reflection, attention and inner thoughts pause, and only the
 body keeps watch (plus the once-a-day story). Nothing piles up overnight.
 The moment you are back, everything carries on.
 
+Sleep: the time the nanites spent resting, or with the app closed, counts
+as sleep. When Moiragen starts, and when you come back, each nanite gets
+energy back for the hours it slept (see Nanite.sleep: 20 an hour, at most
+8 hours counted, never above full).
+
+The inner-life journal (journal.py) starts and stops with him, so it keeps
+recording every time Moiragen starts, catching up on anything it missed.
+
 Everything that happens is sent to `listeners` as event dicts; the viewer
 app (step 8/9) will listen to these.
 """
@@ -36,6 +44,7 @@ import time
 import traceback
 
 from .body import Body
+from .journal import Journal
 from .llm import BrainError
 from .memory_log import log_event
 from .mind import nanite_think
@@ -66,7 +75,9 @@ SOCIAL_IMPORTANCE = {"help": 0.65, "ask_why": 0.55, "explain": 0.5, "lesson": 0.
 class Mind:
     def __init__(self, tick_seconds: float = TICK_SECONDS, rng=None, idle_after: float = IDLE_AFTER):
         self.nanites = load_all()
+        self.wake_up()                     # energy back for the time the app was closed
         self.moiragen = Moiragen.load()
+        self.journal = Journal()
         self.body = Body(self.nanites)
         self.stage = Stage()
         self.predictor = Predictor()
@@ -172,12 +183,32 @@ class Mind:
         self.active = now
         if now:
             text = "You're back, so the nanites carry on living."
+            self.wake_up()                 # energy back for the time they rested
         else:
             text = (f"Nobody has used the app for {self.idle_after / 60:.0f} minutes, so the "
                     f"nanites rest until you're back. Only the body keeps watch.")
         log_event("presence", "mind", active=now, text=text)
         self.emit("presence", active=now, text=text)
         self._vitals()
+
+    def wake_up(self) -> str:
+        """The nanites wake from sleep (the app was closed, or nobody used it).
+        Each gets energy back for the hours since it was last awake (Nanite.sleep).
+        Returns what happened, in words ("" if nobody slept long enough to notice)."""
+        gains, hours = [], 0.0
+        for n in self.nanites.values():
+            hours = max(hours, n.hours_asleep())
+            gained = n.sleep(n.hours_asleep())
+            if gained >= 1:
+                gains.append(f"{n.name} +{gained:.0f} (now {n.energy:.0f})")
+            n.save()                           # awake from now on
+        if not gains:
+            return ""
+        text = f"The nanites slept about {hours:.1f} hours and got energy back: {', '.join(gains)}."
+        log_event("slept", "mind", text=text, hours=round(hours, 2))
+        if hasattr(self, "listeners"):         # not yet during start-up
+            self.emit("presence", active=True, text=text)
+        return text
 
     def _social_allowed(self) -> bool:
         """At most SOCIAL_PER_HOUR social rounds in any hour."""
@@ -404,6 +435,7 @@ class Mind:
         self.emit("asleep", text="Moiragen's loop stopped.")
 
     def start(self) -> None:
+        self.journal.start()               # catches up on anything missed, then follows the log
         self._thread = threading.Thread(target=self.run, name="moiragen-mind", daemon=True)
         self._thread.start()
 
@@ -412,3 +444,4 @@ class Mind:
         self.inbox.put((lambda: None, (), queue.Queue(maxsize=1)))  # wake the loop if it is waiting
         if self._thread:
             self._thread.join(timeout)
+        self.journal.stop()

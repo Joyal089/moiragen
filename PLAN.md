@@ -2,7 +2,7 @@
 
 Each step is small, has its own test, and must pass before the next starts.
 
-**Status: all 10 steps built and tested** (tags `v0.1` to `v0.9`, then `v1.0`), plus step 11, the echo-loop fix (`v1.1`), step 12, fairer judging (`v1.2`), and step 13, checked facts and a fair cost (`v1.3`). Each step's test is `tests/stepN_check.py`; run them all with `tests/run_all.py`.
+**Status: all 10 steps built and tested** (tags `v0.1` to `v0.9`, then `v1.0`), plus step 11, the echo-loop fix (`v1.1`), step 12, fairer judging (`v1.2`), step 13, checked facts and a fair cost (`v1.3`), and step 14, sleep and the inner-life journal (`v1.4`). Each step's test is `tests/stepN_check.py`; run them all with `tests/run_all.py`.
 
 | # | Step | What gets built | How we test it |
 |---|------|-----------------|----------------|
@@ -19,6 +19,7 @@ Each step is small, has its own test, and must pass before the next starts.
 | 11 | **Echo-loop fix** | Verified memory backups; one-off clean-up of repeated lines (first copy kept); echo guard on every saved line and the fine-tuning log; fresh topics for every talk; warmer temperature + repeat penalty; social rounds limited and paused while nobody uses the app | Copies rejected and retried, nothing copied saved or logged, topics rotate, no brain use while resting |
 | 12 | **Fairer judging** | Every verdict (Moiragen's or yours) comes with a short reason; small mood boosts for honesty, "I don't know" and good questions, chosen or not; a nanite may disagree ("I think you're wrong, Moiragen") at no health cost, and Moiragen says why he keeps or changes his choice; each nanite's own way of seeing is tracked and valued, never forced; "wait and see" for answers only time can check | Stand-in brain checks every rule exactly; the real model gives a reason to every nanite and marks a question about next Friday "wait and see" |
 | 13 | **Checked facts, fair cost** | Plain-Python checks (`facts.py`): claims about the past looked up in the life log (a made-up one is corrected kindly, no credit); a calculator for maths that Moiragen follows; honesty boost only for clear signs; softer disagreements caught; "wait and see" never for imagined situations. Moiragen compares answers and judges the answer, not the speaker. He shares the health cost of a wrong answer with the chosen nanite | Stand-in brain checks every rule, including today's real cases (Two's invented memory, the 2-6-12-20-30 sequence, One's soft disagreement, the friend question) |
+| 14 | **Sleep and journal** | Energy comes back for time the app was closed or resting (20 an hour, at most 8 hours, never above full), on start and when you come back. The inner-life journal (`journal.py`) starts with Moiragen, keeps a bookmark in the life log, and catches up on anything written while it was off | Pretend the app was closed for 2 hours and rested for 1; journal catches up, follows, catches up again, never writes twice |
 
 Later (not now): nightly fine-tuning, nanites choosing names (the hooks will be there). No Telegram.
 

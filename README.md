@@ -25,6 +25,7 @@ Moiragen is a digital being that lives on a laptop. He is one mother mind who li
 - **Nanites** have no roles or personalities written in. Each gets a slightly different random temperament at birth, and personality grows from what happens to them: memories, lessons, friendships.
 - **Being wrong** (you mark an answer wrong) costs health, shared fairly: Moiragen chose the answer, so he takes half and the chosen nanite takes half. **Not being chosen** only makes a nanite feel disappointed or left out. It may ask Moiragen why, learn a lesson, and be comforted by a friend. See [How the nanites are judged](#how-the-nanites-are-judged).
 - **Helping** costs energy and **resting** refills it. A hurt nanite always gets help from the friend who cares most.
+- **Sleep:** while the app is closed, or nobody has used it for 10 minutes, the nanites sleep. When Moiragen starts or you come back, each one gets energy back for the time it slept: 20 an hour, counting at most 8 hours, never above full.
 - Every nanite keeps a copy of the **blueprint**, so a broken one can be rebuilt by a friend. Its memories and lessons come back from the life log.
 - When the GPU gets hot or the battery is low, the **body** slows his thinking down.
 - Every new line is checked against what the nanites said recently. A nanite that **repeats** itself or a friend is asked to say something new (see [Keeping their words fresh](#keeping-their-words-fresh)).
@@ -69,6 +70,8 @@ Everything he remembers is in `./memory` (set by `MEMORY_DIR` in `.env`):
 | `moiragen.json` | his memories, decisions and self-knowledge |
 | `nanites/<id>.json` | each nanite's body, feelings, friendships, memories, lessons and blueprint copy |
 | `stories/YYYY-MM-DD.md` | his daily life stories |
+| `inner_life_journal.md` | a readable diary of his inner life: thoughts, talks, every question with each answer, his choices, verdicts, corrections and sleep. Written from the life log by `moiragen/journal.py`, which starts with Moiragen and first catches up on anything it missed |
+| `journal_state.json` | the journal's bookmark: how far into the life log it has written |
 | `exports/` | fine-tuning exports |
 | `backups/<date>_<label>/` | full copies of memory, made before anything rewrites it (each checked file by file) |
 
@@ -145,6 +148,7 @@ moiragen/
   mother.py      Moiragen: deciding, judging with reasons, reconsidering, reflecting, inner voice
   styles.py      each nanite's own way of seeing (word counts, shown to Moiragen only)
   facts.py       plain-Python checks: calculator, past claims, honesty signs, disagreement
+  journal.py     the inner-life journal, written from the life log (catches up on every start)
   body.py        body cells (clock, battery, temperature, load)
   stage.py       the global workspace
   prediction.py  expectations and surprise

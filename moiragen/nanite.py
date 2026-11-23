@@ -19,6 +19,11 @@ from .styles import starting_style
 NANITE_DIR = MEMORY_DIR / "nanites"
 NANITE_DIR.mkdir(parents=True, exist_ok=True)
 
+# Sleep: while the app is closed (or nobody uses it), the nanites sleep and
+# their energy slowly comes back, like a night's sleep.
+SLEEP_ENERGY_PER_HOUR = 20   # 40 -> 100 takes three hours
+SLEEP_MAX_HOURS = 8          # sleep longer than this counts as 8 hours (a full night)
+
 # The three thinking nanites. ids are used for file names; display names
 # are what we show. Later each nanite will choose its own name.
 NANITES = {
@@ -52,6 +57,7 @@ class Nanite:
     style: dict = field(default_factory=dict)        # its own way of seeing (see styles.py)
     chosen_name: str | None = None                   # filled in later by the nanite itself
     born: str = field(default_factory=_now)
+    last_awake: str = field(default_factory=_now)    # when it was last awake (set on every save)
 
     # ---------- name ----------
 
@@ -117,6 +123,28 @@ class Nanite:
         self.emotions["tired"] = max(0.0, self.emotions.get("tired", 0) - 0.3)
         log_event("rest", self.name, change=amount, energy=self.energy)
 
+    def hours_asleep(self, now: datetime | None = None) -> float:
+        """Hours since it was last awake (0 if the clock seems to have gone backwards)."""
+        try:
+            since = datetime.fromisoformat(self.last_awake)
+        except (TypeError, ValueError):
+            return 0.0
+        return max(0.0, ((now or datetime.now()) - since).total_seconds() / 3600)
+
+    def sleep(self, hours: float) -> float:
+        """It slept for `hours` (the app was closed, or nobody was using it).
+        Energy comes back at SLEEP_ENERGY_PER_HOUR, counting at most
+        SLEEP_MAX_HOURS, and never above full. Returns the energy gained."""
+        hours = min(max(hours, 0.0), SLEEP_MAX_HOURS)
+        before = self.energy
+        self.energy = self._clamp("energy", self.energy + hours * SLEEP_ENERGY_PER_HOUR)
+        gained = round(self.energy - before, 2)
+        if hours >= 0.5:                     # a real sleep also eases tiredness
+            self.emotions["tired"] = 0.0
+        if gained > 0:
+            log_event("sleep", self.name, hours=round(hours, 2), change=gained, energy=self.energy)
+        return gained
+
     def hurt(self, amount: float, reason: str) -> None:
         """Being wrong lowers health and makes it a bit sad."""
         self.health = self._clamp("health", self.health - amount)
@@ -178,7 +206,11 @@ class Nanite:
 
         We write to a temporary file first and then swap it in, so a crash
         in the middle can never leave a half-written (broken) file.
+
+        Saving also marks it as awake now. (While everyone rests, nothing
+        saves the nanites, so last_awake keeps the moment they fell asleep.)
         """
+        self.last_awake = _now()
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, self.path)
@@ -189,6 +221,9 @@ class Nanite:
         path = NANITE_DIR / f"{nanite_id}.json"
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
+            if "last_awake" not in data:
+                # Files from before sleep existed: it was last awake when its file was last saved.
+                data["last_awake"] = datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds")
             return cls(**data)
         except FileNotFoundError:
             raise
