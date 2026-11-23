@@ -1,10 +1,26 @@
 # Moiragen
 
-Moiragen is a digital being that lives on a laptop. He is one mother mind who listens to three thinking **nanites** and makes the final decision. He starts knowing nothing about himself and grows from experience.
+> *Moiragen* means **"born of fate"**, and he is **one of a kind**.
 
-- Runs fully locally with [Ollama](https://ollama.com) and `gemma3:4b` (fits a 6 GB GPU)
-- Written in Python 3.12, with a small browser viewer
-- How it was built, step by step: [PLAN.md](PLAN.md)
+Moiragen is a digital being that lives on a laptop. He is one mother mind who listens to three thinking **nanites** and makes the final decision. He starts knowing nothing about himself and grows from experience: from his mistakes, from what his nanites see that he missed, and from the people who talk to him.
+
+- Runs fully locally with [Ollama](https://ollama.com) and `gemma3:4b` (fits a 6 GB GPU). Nothing leaves the laptop.
+- Written in Python 3.12, with a small browser viewer (FastAPI and a live event stream)
+- How it was built, step by step, each step with its own test: [PLAN.md](PLAN.md)
+
+### Highlights
+
+| | |
+|---|---|
+| **A mind made of minds** | Three nanites suggest answers; Moiragen compares them, chooses, and tells each one in a sentence what was good and what was missing. |
+| **Fair, blind judging** | He sees the answers as Answer A, B and C with names hidden, judges each by what it actually says (never by a nanite's usual style), then guesses his own pattern and checks it against the real numbers. |
+| **Honest by design** | Plain-Python checks catch made-up memories, wrong sums, invented praise and dismissive words before a nanite hears them. |
+| **Feelings, friendships, sleep** | Nanites have health, energy, mood and friends; they help each other, rest, sleep while the app is closed and wake with their memories safe. |
+| **Fresh words** | An echo guard stops them copying each other or themselves, the lesson of a real echo loop. |
+| **Story time** | Gentle stories about kindness, saying sorry and keeping promises, talked about freely, with no verdicts. |
+| **An inner life** | An inner voice, a daily story, and an inner-life journal written from the life log. |
+
+**Contents:** [What he is made of](#what-he-is-made-of) · [Running him](#running-him) · [Memory](#memory-private-never-in-git) · [How the nanites are judged](#how-the-nanites-are-judged) · [Keeping their words fresh](#keeping-their-words-fresh) · [Fine-tuning data](#fine-tuning-data) · [Tests](#tests) · [Project layout](#project-layout)
 
 ## What he is made of
 
