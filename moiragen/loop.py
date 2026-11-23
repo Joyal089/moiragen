@@ -54,6 +54,7 @@ from .prediction import Predictor
 from .social import after_decision, social_round, needs_help
 from .stage import Stage
 from .story import story_path, write_daily_story
+from .storytime import tell_story
 from .styles import describe as describe_style
 
 # --- Tunable numbers ---
@@ -291,6 +292,10 @@ class Mind:
         """Write today's story now."""
         return self.call(self.handle_story, timeout=timeout)
 
+    def story_time(self, title: str, story: str, timeout: float = 600) -> dict:
+        """Share a story and let everyone talk about it freely (v2.1, storytime.py)."""
+        return self.call(self.handle_story_time, title, story, timeout=timeout)
+
     # The jobs themselves (always run in the mind's thread):
     def handle_chat(self, nanite_id: str, text: str) -> dict:
         n = self.nanites[nanite_id]
@@ -322,6 +327,13 @@ class Mind:
         if text:
             self.emit("story", day=day, text=text)
         return text
+
+    def handle_story_time(self, title: str, story: str) -> dict:
+        out = tell_story(self.moiragen, self.nanites, title, story, notify=self.emit)
+        if out["stopped"]:
+            self.emit("story_time_stopped", title=title, too_tired=out["stopped"])
+        self._vitals()
+        return out
 
     def handle_question(self, text: str) -> dict:
         self.emit("question", text=text)

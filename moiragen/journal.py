@@ -60,6 +60,14 @@ def render(e: dict) -> str | None:
         return f"- {at} *Surprise:* {clean(e.get('text'))}"
     if k == "story":
         return f"\n#### {at} Moiragen's story\n\n{e.get('text', '')}\n"
+    if k == "story_time" and who == "mind":          # v2.1: story time
+        return f"\n#### {at} Story time: {clean(e.get('story'))}\n\n> {clean(e.get('text'))}\n"
+    if k == "story_time":
+        return f"- {at} **{who}** (story time): {clean(e.get('said') or e.get('text'))}"
+    if k == "story_talk" and e.get("quiet"):
+        return f"- {at} _({who} was too tired or had nothing new to say about the story)_"
+    if k == "story_time_stopped":
+        return f"- {at} _{clean(e.get('text'))}_"
     if k == "decision_full":
         return _render_decision(e, at)
     # (a "pattern" event is written inside its decision above, after the names are revealed)

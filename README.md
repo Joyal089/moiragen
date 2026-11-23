@@ -49,6 +49,14 @@ Then open http://127.0.0.1:8765. The server only listens on this laptop. Press C
 
 If you leave the app alone for 10 minutes (no question, no chat, no mouse or keyboard in the viewer), the top bar shows "Resting while you're away" and the nanites pause. Move the mouse or say something and they carry on. Social moments are also limited to about one every 2 minutes, and at most 12 an hour.
 
+**Story time** (v2.1): a gentle time to share a short, simple story (about kindness, saying sorry, keeping a promise, or helping a friend "right after" when you can't help right away) and let everyone talk about it freely. Each nanite says what it thinks, then answers what the others said, and then Moiragen shares his own thoughts as one of the group, not as a judge. There are no verdicts, no right or wrong and no health changes; only thinking costs energy, as always. The echo guard stays on, for Moiragen too, and story time stops if any nanite's energy is below 30. Send a story to the running server:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8765/api/storytime -ContentType "application/json" -Body '{"title": "Right after", "story": "Mia promised to help Leo..."}'
+```
+
+Everything they say appears in the viewer and in the inner-life journal.
+
 Terminal tools, if you prefer:
 
 | Command | What it does |
@@ -169,6 +177,7 @@ moiragen/
   stage.py       the global workspace
   prediction.py  expectations and surprise
   story.py       the daily story
+  storytime.py   story time: a story shared, talked about freely, no verdicts
   loop.py        the thinking loop that runs his whole life (rests while you are away)
   export.py      fine-tuning export
   backup.py      verified backups of the memory folder

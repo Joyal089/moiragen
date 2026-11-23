@@ -608,6 +608,20 @@ function handleEvent(e) {
       feed("surprise", e.text, e.time);
       break;
 
+    case "story_time":           // v2.1: the human shares a story
+      feed("story time", `${e.title}:\n${e.text}`, e.time, "story");
+      break;
+
+    case "story_talk":           // v2.1: someone talks about the story (no verdicts)
+      setThinking(e.who, false);
+      bubble(e.who, e.text, e.who === "Moiragen" ? "inner" : "");
+      feed("story time", `${e.who}: ${e.text}`, e.time);
+      break;
+
+    case "story_time_stopped":
+      feed("story time", `Story time stopped: ${e.too_tired.join(", ")} too tired.`, e.time);
+      break;
+
     case "story":
       feed("story", `Story of ${e.day}:\n${e.text}`, e.time, "story");
       break;

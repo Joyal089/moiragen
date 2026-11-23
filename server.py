@@ -57,6 +57,11 @@ class ChatBody(BaseModel):
     nanite_id: str
     text: str
 
+class StoryTimeBody(BaseModel):
+    title: str = ""
+    story: str
+
+
 class FeedbackBody(BaseModel):
     decision_id: str
     verdict: str          # "right", "wrong" or "wait"; situational: "thoughtful", "okay", "needs_care"
@@ -154,6 +159,13 @@ def create_app(mind: Mind | None = None, start_mind: bool = True) -> FastAPI:
     async def story():
         text = await run_job(app.state.mind.request_story)
         return {"story": text}
+
+    @app.post("/api/storytime")
+    async def storytime(body: StoryTimeBody):
+        """Story time (v2.1): share a short story; everyone talks about it freely."""
+        if not body.story.strip():
+            raise HTTPException(400, "Empty story")
+        return await run_job(app.state.mind.story_time, body.title.strip() or "A story", body.story.strip())
 
     @app.post("/api/active")
     def active():
