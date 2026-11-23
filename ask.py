@@ -81,7 +81,17 @@ def ask_verdict(decision_id, allow_wait=True):
         reason = input("Why? (a short reason) ").strip()
         while not reason:
             reason = input("Please give a short reason, so the nanites can learn from it: ").strip()
-    print(f"Moiragen > {moiragen.feedback(decision_id, verdict, nanites, reason)}\n")
+    right = ""
+    if verdict == "wrong":
+        # Which nanite was right? Then he writes what it saw that he missed (v1.7).
+        d = moiragen.decisions.get(decision_id, {})
+        others = [s["nanite"] for s in d.get("suggestions", []) if s["nanite"] != d.get("chosen")]
+        if others:
+            pick = input(f"Who was right? ({' / '.join(f'{i + 1} = {n}' for i, n in enumerate(others))}"
+                         f" / Enter for nobody) ").strip()
+            if pick.isdigit() and 1 <= int(pick) <= len(others):
+                right = others[int(pick) - 1]
+    print(f"Moiragen > {moiragen.feedback(decision_id, verdict, nanites, reason, right_nanite=right)}\n")
 
 
 nanites = load_all()

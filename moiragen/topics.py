@@ -43,7 +43,8 @@ SUPPORT_SHAPES = [
     "Remind them of one good thing about them that you know from your memories. One or two sentences.",
     "Ask them one gentle question about how they feel, and tell them you are listening.",
     "Tell them, in your own words, that their idea still mattered, and say why.",
-    "Offer them one small idea that might help them feel better. One or two sentences.",
+    "Offer them one small idea that might help, or simply keep them company. They do not have "
+    "to feel better right away. One or two sentences.",
     "Tell them one honest thing you like about thinking alongside them.",
 ]
 

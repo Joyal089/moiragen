@@ -457,7 +457,12 @@ SITUATION = re.compile(
 WISH_OR_FEELING = re.compile(
     r"\bwould you like\b|\bdo you (?:want|wish|hope|like|enjoy|prefer)\b"
     r"|\bwhat (?:do|would) you (?:want|wish|hope|enjoy|prefer|love)\b"
-    r"|\bfeel(?:s|ing|ings)?\b|\bfelt\b|\bmakes? you\b|\bwish(?:es)?\b|\bdreams?\b",
+    r"|\bfeel(?:s|ing|ings)?\b|\bfelt\b|\bmakes? you\b|\bwish(?:es)?\b|\bdreams?\b"
+    # v1.7: basic feelings ("How can you tell when another nanite is sad?")
+    r"|\b(?:sad|sadness|happy|happiness|glad|angry|anger|mad|afraid|scared|fear|frightened|lonely|"
+    r"loneliness|worried|worry|anxious|nervous|upset|hurt|tired|bored|excited|calm|peaceful|joy|joyful|"
+    r"grief|grieving|jealous|proud|ashamed|embarrassed|frustrated|disappointed|left out|love|loved|"
+    r"emotions?|moods?|cry|crying)\b",
     re.IGNORECASE)
 
 

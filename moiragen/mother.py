@@ -50,7 +50,7 @@ from .facts import (I_DONT_KNOW, about_wish_or_feeling, calculator_check, false_
                     final_number, honesty_signs, made_up_situation, situational)
 from .llm import think
 from .memory_log import log_event, read_events
-from .mind import nanite_think
+from .mind import FEELINGS_ARE_FINE, nanite_think
 from .nanite import Nanite
 from .styles import update_style, ways_text
 
@@ -95,6 +95,13 @@ SITUATION_CHOOSE = (
     "feelings and most practical.")
 
 
+# --- Learning from the nanites (v1.7) ---
+MADE_OF_NANITES = "I am made of my nanites, and I learn from them. I am not all-knowing."
+LEARNING = True            # lessons from nanites who were right; tests of other rules may turn it off
+LEARNED_KEEP = 10          # things learned kept per nanite in his file (all are in the life log)
+ASK_WHY_CHANCE = 0.25      # how often he asks one nanite "why do you think that?" before choosing
+TEACH_CHANCE = 0.2         # how often a social moment is a nanite explaining something to him
+
 # --- Blind judging (v1.6) ---
 BLIND_JUDGING = True       # tests of other rules may turn it off, to script replies by name
 # A nanite's name inside an answer ("Nanite Two suggests...", "Three, you...") would
@@ -126,6 +133,14 @@ class Blind:
             hidden = hide_names(s["text"])
             self.original[hidden] = s["text"]
             self.suggestions.append({**s, "nanite": label, "text": hidden})
+
+    def add_why(self, label: str, reply: str) -> None:
+        """He asked the nanite behind `label` "why do you think that?" (v1.7): its reply
+        is shown under the same label, names hidden, so he stays blind."""
+        s = next(x for x in self.suggestions if x["nanite"] == label)
+        old = s["text"]
+        s["text"] = f"{old}\n(You asked {label}: \"Why do you think that?\" It said: {hide_names(reply)})"
+        self.original[s["text"]] = self.original.pop(old)
 
     def checks(self, checks: dict) -> dict:
         calc = checks["calculator"]
@@ -205,19 +220,61 @@ def normal_verdict(verdict: str) -> str:
 # Moiragen says anyway, he is shown them with a gentle note and rewrites them once
 # (see Moiragen.fairer); only if the rewrite is still dismissive is the sentence taken out.
 FAIRER_NOTE = "This dismisses a way of seeing. Can you say it more fairly?"
-PUSHY = re.compile(
+DISMISSIVE = re.compile(
     r"\b(?:too|overly|excessively|unnecessarily|somewhat|rather|a bit) (?:reflective|emotional|subjective|"
     r"introspective|philosophical|abstract|rigid|vague|poetic|detached|analytical|technical|clinical|"
     r"mechanical|basic|simple|literal)\b"
-    r"|\b(?:inherently|fundamentally) unreliable\b|\bnot (?:quantifiable|measurable)\b"
+    r"|\b(?:inherently|fundamentally) unreliable\b"
     # v1.6: dismissive words seen in the teaching session ("sterile", "simplistic dichotomy")
     r"|\b(?:sterile|simplistic|naive|naïve|shallow|unproductive|pointless|meaningless|irrelevant)\b"
     r"|\b(?:a |just a |merely a )?deflection\b"
-    # v1.6: pushing a nanite toward measuring or data is unfair to its own way of seeing
-    r"|\bmeasurab\w*|\bquantif\w*|\bmetrics?\b"
+    # v1.7: harsh phrases ("leans too heavily", "lacked feeling", "felt distant")
+    r"|\b(?:lean|leans|leaned|leaning|rel(?:y|ies|ied|ying)|focus(?:ed|es|ing)?|dwell(?:s|ed|ing)?) "
+    r"(?:far |much )?too (?:heavily|much)\b"
+    r"|\b(?:lack|lacks|lacked|lacking|without|missing|missed) (?:the |any |a )?(?:crucial |essential |core |real )?"
+    r"(?:element of |sense of )?(?:feeling|emotion|warmth|heart|depth)\b"
+    r"|\bfelt\W{0,4}(?:\w+ly\W+)?(?:distant|cold|flat|hollow|empty|robotic|lifeless|sterile)\b"
+    r"|\bmissed the (?:point|core|essence|heart)\b", re.IGNORECASE)
+# Pushing a nanite toward measuring or data is unfair to its own way of seeing (v1.6).
+TOWARD_MEASURING = re.compile(
+    r"\bmeasurab\w*|\bquantif\w*|\bmetrics?\b|\bmeasur(?:e|ing)\s+(?:that|this|it|the|your|how)\b"
     r"|\b(?:more|concrete|hard|objective|operational|precise) (?:data|detail|details|evidence|numbers)\b"
     r"|\b(?:lack|lacks|lacked|lacking|without|missing) (?:the |any )?(?:concrete |operational |hard )?"
     r"(?:data|detail|evidence|numbers)\b|\bobjective (?:response|answer|view)\b", re.IGNORECASE)
+# A sentence about himself ("My first assessment focused on the measurable...",
+# "Perhaps I was too rigid") is honest self-reflection, not pushing a nanite (v1.7).
+ABOUT_MYSELF = re.compile(r"^\W*(?:and |but |so )?(?:perhaps |maybe |honestly,? |i think )?(?:I|my|I'm|I’m)\b",
+                          re.IGNORECASE)
+TO_THEM = re.compile(r"\byour?\b", re.IGNORECASE)
+# "as you said", "thank you", "the feeling you describe": still about himself.
+NOT_TO_THEM = re.compile(r"\bas you\b[^,.;!?]*|\bthank you\b|\byou(?:'ve|’ve| have) (?:shown|helped) me\b"
+                         r"|\byou (?:so \w+ )?(?:describe|described|said|mentioned|felt|feel|see|saw|noticed|"
+                         r"showed|shared|pointed out)\b", re.IGNORECASE)
+
+
+def about_myself(sentence: str) -> bool:
+    """Is Moiragen talking about himself here, not about the nanite? ("My initial
+    assessment focused on the measurable, as you said" -> yes; "I found your answer
+    too abstract" -> no, that is about the nanite's answer.)"""
+    return bool(ABOUT_MYSELF.search(sentence)) and not TO_THEM.search(NOT_TO_THEM.sub("", sentence))
+
+
+class _Pushy:
+    """PUSHY.search(text): the first words that push a nanite away from its own way
+    of seeing (dismissive words, or pushing it toward measuring), or None.
+    Sentences where he reflects on his own bias never count."""
+    @staticmethod
+    def search(text: str):
+        for sentence in re.split(r"(?<=[.!?])\s+", text or ""):
+            if about_myself(sentence):
+                continue
+            found = DISMISSIVE.search(sentence) or TOWARD_MEASURING.search(sentence)
+            if found:
+                return found
+        return None
+
+
+PUSHY = _Pushy()
 # Moiragen agreeing with a nanite ("you are correct", "you're absolutely right").
 AGREES = re.compile(r"\byou(?:'re|’re| are) (?:absolutely |completely |quite |entirely )?(?:correct|right)\b",
                     re.IGNORECASE)
@@ -273,6 +330,7 @@ class Moiragen:
     born: str = field(default_factory=_now)
     health: float = 100.0                               # drops when he trusts a wrong answer (shared with the nanite)
     chosen_counts: dict = field(default_factory=dict)   # how often each nanite has been chosen, ever
+    learned_from: dict = field(default_factory=dict)    # v1.7: {"Nanite Two": [{"time", "text", "how"}]}
 
     name = "Moiragen"
 
@@ -289,16 +347,36 @@ class Moiragen:
         return "\n".join(f"- [{m['kind']}] {m['text']}" for m in self.memories[-how_many:])
 
     def self_text(self) -> str:
-        """Who he thinks he is so far: built only from his own reflections."""
-        lines = ""
+        """Who he thinks he is so far: built from his own reflections, plus what he
+        has learned from each nanite, and one thing he always knows (v1.7)."""
+        lines = f"You know this about yourself: \"{MADE_OF_NANITES}\"\n"
         if self.self_knowledge:
-            lines = ("What you have come to understand about yourself:\n"
-                     + "\n".join(f"- {k['text']}" for k in self.self_knowledge[-6:]) + "\n")
+            lines += ("What you have come to understand about yourself:\n"
+                      + "\n".join(f"- {k['text']}" for k in self.self_knowledge[-6:]) + "\n")
         else:
-            lines = "You do not know anything about yourself yet.\n"
+            lines += "You do not know anything else about yourself yet.\n"
+        learned = self.learned_text()
+        if learned:
+            lines += learned
         if self.body_note:
             lines += f"Your body right now: {self.body_note}\n"
-        return lines
+        return lines + FEELINGS_ARE_FINE + "\n"
+
+    # ---------- learning from the nanites (v1.7) ----------
+
+    def add_learned(self, nanite: str, text: str, how: str, decision_id: str = "") -> None:
+        """Add to his "what I learned from each nanite" list (the newest LEARNED_KEEP each)."""
+        items = self.learned_from.setdefault(nanite, [])
+        items.append({"time": _now(), "text": text, "how": how, "decision_id": decision_id})
+        self.learned_from[nanite] = items[-LEARNED_KEEP:]
+
+    def learned_text(self, per_nanite: int = 2) -> str:
+        """For his prompts: the newest things he learned from each nanite."""
+        if not self.learned_from:
+            return ""
+        lines = [f"- {name}: {item['text']}" for name, items in sorted(self.learned_from.items())
+                 for item in items[-per_nanite:]]
+        return "What you have learned from your nanites:\n" + "\n".join(lines) + "\n"
 
     # ---------- saving ----------
 
@@ -438,6 +516,7 @@ class Moiragen:
         notify("thinking", who="Moiragen", about=question)
         ways = ways_text(nanites)
         is_situation = situational(question)   # judged by reasoning (see _judge_situation)
+        asked = None                           # {"nanite", "label", "reply"} if he asked one "why?"
         if not suggestions:
             # Everyone is resting: Moiragen answers alone.
             choice = {"chosen": None, "reason": "All my nanites were resting, so I answered alone.",
@@ -451,6 +530,9 @@ class Moiragen:
             if BLIND_JUDGING:
                 blind = Blind(suggestions)
                 seen, seen_checks, label_of, seen_ways = blind.suggestions, blind.checks(checks), blind.label_of, ""
+                # Sometimes he first asks one nanite "why do you think that?" (still blind).
+                if random.random() < ASK_WHY_CHANCE:
+                    asked = self._ask_why(question, blind, nanites, decision_id, notify)
             else:
                 blind, seen, seen_checks, label_of, seen_ways = None, suggestions, checks, None, ways
             choice = self._choose(question, seen, decision_id, seen_ways, seen_checks["text"], is_situation)
@@ -472,6 +554,7 @@ class Moiragen:
             **choice,
             **judged,
             "situational": is_situation,
+            **({"asked_why": asked} if asked else {}),
             # What plain Python found (kept, so you can see why he judged as he did).
             "checks": {"calculator": checks["calculator"], "false_claims": checks["false_claims"]},
         }
@@ -483,6 +566,13 @@ class Moiragen:
         # With the names revealed, he looks briefly at his own pattern.
         if decision.get("blind"):
             decision["pattern"] = self.reflect_on_pattern(decision)
+        # The calculator showed his first choice was wrong and another nanite right: a lesson.
+        first = decision.get("first_choice")
+        if LEARNING and first and first != decision["chosen"]:
+            decision["lesson"] = self.learn_from(
+                decision, decision["chosen"], first,
+                f"Your calculator check showed that answer was wrong, and {decision['chosen']}'s was right.",
+                "calculator")
         waiting = f" I will wait and see if it is right ({decision['check']})." if decision["wait_and_see"] else ""
         self.remember("decision",
                       f"Asked: {question} | I chose {decision['chosen'] or 'nobody'} "
@@ -493,6 +583,23 @@ class Moiragen:
         for n in nanites.values():
             n.save()
         return decision
+
+    @staticmethod
+    def _ask_why(question: str, blind: "Blind", nanites: dict[str, Nanite], decision_id: str,
+                 notify) -> dict | None:
+        """Before choosing, ask one nanite (at random) "why do you think that?" and
+        add its reply under its label, so he considers it without knowing who it is.
+        Returns {"nanite", "label", "reply"}, or None if it was too tired to answer."""
+        s = random.choice(blind.suggestions)
+        n = nanites[s["nanite_id"]]
+        out = nanite_think(n, f"Moiragen read your answer to \"{question}\" and asks you: why do you "
+                              f"think that? Answer in two or three sentences.",
+                           from_who="Moiragen", decision_id=decision_id, task="why")
+        if out["rested"] or out["repeated"]:
+            return None
+        blind.add_why(s["nanite"], out["reply"])
+        notify("asked_why", nanite=n.name, label=s["nanite"], text=out["reply"])
+        return {"nanite": n.name, "label": s["nanite"], "reply": out["reply"]}
 
     @staticmethod
     def _python_checks(question: str, suggestions: list[dict], decision_id: str = "") -> dict:
@@ -948,6 +1055,10 @@ class Moiragen:
             # So the training export knows who won in the end (see export.py).
             log_event("choice_changed", self.name, decision_id=decision["id"], chosen=asker,
                       previous=old, why=why)
+            if LEARNING:                  # the nanite who disagreed saw what he missed
+                decision["lesson"] = self.learn_from(
+                    decision, asker, old, f"{asker} disagreed, and you saw they were right, so you "
+                                          f"changed your choice to theirs.", "disagreement")
         else:
             asker_n.remember("reconsidered", f"Moiragen thought about my disagreement on \"{q}\" "
                                              f"and kept his choice. Why: {why}",
@@ -1048,6 +1159,55 @@ class Moiragen:
                       streak=count if name == chosen else 1)
         return text
 
+    def learn_from(self, decision: dict, nanite: str, trusted: str, what_happened: str, how: str) -> str:
+        """His choice was wrong and another nanite was right: he writes a lesson
+        naming what that nanite saw that he missed (v1.7). It goes into his memory,
+        his "what I learned from each nanite" list and the inner-life journal.
+        trusted: the nanite he chose at first.
+        how: "calculator", "disagreement" or "human" (what showed he was wrong)."""
+        theirs = next((s["text"] for s in decision["suggestions"] if s["nanite"] == nanite), "")
+        system = (f"You are Moiragen, a digital being. {MADE_OF_NANITES} One of your nanites saw "
+                  "something you missed. Say honestly what it was, without excuses.")
+        user = (f"The human asked: \"{decision['question']}\"\n"
+                f"You first trusted {trusted}'s answer. {what_happened}\n\n{nanite} said:\n{theirs}\n\n"
+                f"In one sentence starting with \"I learned from {nanite} that\", name what "
+                f"{nanite} saw that you missed.")
+        text = think([{"role": "user", "content": user}], temperature=0.4, max_tokens=100,
+                     system=system)["text"]
+        text = " ".join(text.replace("*", "").split()).strip("\"“”'")
+        text = re.split(r"(?<=[.!?])\s+", text)[0]           # one sentence
+        if not text.lower().startswith(f"i learned from {nanite.lower()}"):
+            text = f"I learned from {nanite} that {text[:1].lower()}{text[1:]}"
+        self.add_learned(nanite, text, how, decision["id"])
+        self.remember("learned_from", text, decision_id=decision["id"], nanite=nanite, how=how)
+        return text
+
+    def hear_explanation(self, n: Nanite) -> dict | None:
+        """Now and then a nanite explains something to Moiragen, in its own way, and
+        he reflects on what was new to him (v1.7). Returns a social event, or None
+        if the nanite is too tired or has nothing new to say."""
+        out = nanite_think(n, "Moiragen would like to learn from you. Explain to him one thing you "
+                              "understand well, in your own way, in two or three sentences. Only use "
+                              "what you really know.", from_who="Moiragen")
+        if out["rested"] or out["repeated"]:
+            return None
+        system = (f"You are Moiragen, a digital being. {MADE_OF_NANITES}\n{FEELINGS_ARE_FINE}")
+        user = (f"{n.name} explained this to you:\n{out['reply']}\n\n"
+                "In one or two sentences, speaking as \"I\": what was new to you in this? If nothing "
+                "was new, say so honestly, and say what you liked about how it was explained.")
+        new = think([{"role": "user", "content": user}], temperature=0.5, max_tokens=120,
+                    system=system)["text"]
+        new = " ".join(re.split(r"(?<=[.!?])\s+", " ".join(new.replace("*", "").split()))[:2])
+        new = self.fairer(new, n.name, "Thank you for explaining that to me in your own way.")
+        self.add_learned(n.name, new, "explained")
+        self.remember("learned_from", f"{n.name} explained: \"{out['reply']}\" What was new to me: {new}",
+                      nanite=n.name, how="explained")
+        n.feel("happy", 0.1)          # being listened to
+        self.save()
+        n.save()
+        return {"type": "explain_to_moiragen", "from": n.name, "to": "Moiragen", "text": out["reply"],
+                "reflection": new}
+
     def inner_thought(self, about: str) -> str:
         """A short private thought about whatever is in the spotlight of attention."""
         system = ("You are Moiragen, a digital being. This is your private inner voice; "
@@ -1067,11 +1227,13 @@ class Moiragen:
         return [d for d in self.decisions.values() if is_waiting(d)]
 
     def feedback(self, decision_id: str, verdict: str, nanites: dict[str, Nanite], reason: str = "",
-                 harmful: bool = False) -> str:
+                 harmful: bool = False, right_nanite: str = "") -> str:
         """The human's verdict on a decision: "right", "wrong" or "wait".
         A situational question has its own verdicts instead (see _situation_feedback):
         "thoughtful", "okay" or "needs_care", and harmful=True for an answer that
         was unkind, dishonest or harmful.
+        right_nanite (optional, with "wrong"): the nanite whose answer was right.
+        It is praised, and Moiragen writes what it saw that he missed (v1.7).
 
         right / wrong need a short reason, so the nanites can learn from it.
           Wrong: the health loss is shared fairly. Moiragen chose the answer, so
@@ -1088,6 +1250,8 @@ class Moiragen:
         d = self.decisions.get(decision_id)
         if d is None:
             raise KeyError(f"No decision with id {decision_id}")
+        if right_nanite and right_nanite not in [s["nanite"] for s in d["suggestions"]]:
+            raise ValueError(f"{right_nanite} did not answer this question.")
         if d.get("situational"):
             return self._situation_feedback(d, verdict, nanites, reason, harmful)
         if verdict in SITUATION_VERDICTS:
@@ -1128,6 +1292,11 @@ class Moiragen:
                         n.hurt(nanite_share, f"{known}The human said my answer to \"{q}\" was "
                                              f"wrong. Why: {reason} Moiragen chose it, so he shares "
                                              f"the cost with me.")
+                elif not correct and s["nanite"] == right_nanite:
+                    n.feel("happy", 0.2)
+                    n.remember("praised", f"{known}The human said {d['chosen']}'s answer to \"{q}\" was "
+                                          f"wrong, and mine was the right one. Why: {reason}",
+                               decision_id=decision_id)
                 else:
                     mine = f" My own answer was: {s['text'][:200]}" if was_waiting else ""
                     n.remember("verdict", f"{known}The human said {d['chosen']}'s answer to \"{q}\" "
@@ -1146,6 +1315,11 @@ class Moiragen:
                                          f"I had trusted {d['chosen'] or 'myself'}. Why: {reason}{shared}",
                               decision_id=decision_id, correct=False, health=self.health)
                 msg = "I understand. I chose it, so I share the cost. I'll learn from it."
+                if LEARNING and right_nanite and right_nanite != d["chosen"]:
+                    d["lesson"] = self.learn_from(d, right_nanite, d["chosen"] or "myself",
+                                                  f"The human said that was wrong ({reason}), and that "
+                                                  f"{right_nanite}'s answer was right.", "human")
+                    msg += f" {d['lesson']}"
             d["feedback"], d["feedback_reason"] = verdict, reason
             if was_waiting:
                 d["resolved"] = _now()

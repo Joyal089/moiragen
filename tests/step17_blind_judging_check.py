@@ -35,6 +35,7 @@ from moiragen.mother import PUSHY, Blind, Moiragen, hide_names
 from moiragen.nanite import load_all
 
 assert mother_mod.BLIND_JUDGING, "blind judging is on by default"
+mother_mod.LEARNING, mother_mod.ASK_WHY_CHANCE = False, 0   # v1.7 learning has its own check (step 18)
 NAMES = re.compile(r"Nanite (?:One|Two|Three)")
 
 

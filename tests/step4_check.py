@@ -19,6 +19,8 @@ from moiragen import mother as mother_mod
 from moiragen.mother import Moiragen, parse_choice, WRONG_ANSWER_DAMAGE
 from moiragen.nanite import load_all
 
+mother_mod.ASK_WHY_CHANCE = 0   # no random "why do you think that?" here (step 18 checks it)
+
 # 1. The JSON reader survives messy replies (no model needed).
 sugg = [{"nanite": "Nanite One", "text": "A"}, {"nanite": "Nanite Two", "text": "B"}]
 assert parse_choice('{"chosen": "nanite two", "reason": "r", "answer": "x"}', sugg)["chosen"] == "Nanite Two"

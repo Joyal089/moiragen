@@ -28,6 +28,9 @@ RECENT_MEMORIES = 8
 # --- The echo guard (see echo.py) ---
 ECHO_RETRIES = 2           # how many times a nanite is asked to say something new
 RETRY_WARMER = 0.1         # each new try is a little more adventurous (temperature)
+# Nobody has to sound happy (v1.7). Said to the nanites and to Moiragen.
+FEELINGS_ARE_FINE = ("You never need to sound happy or cheerful. Feeling neutral, tired, sad or "
+                     "unsure is fine; just say what is true for you.")
 NOTHING_NEW = ("I notice I'm only repeating what was already said, "
                "so I'll stay quiet until I have something new.")
 
@@ -75,7 +78,7 @@ def build_system_prompt(n: Nanite) -> str:
         f"discovering who you are, only through what you experience.\n\n"
         f"Your body right now: {describe_state(n)}\n"
         f"Your feelings may show in how you answer, but only as much as you really feel them. "
-        f"These numbers are for your own awareness; do not recite them.\n\n"
+        f"These numbers are for your own awareness; do not recite them. {FEELINGS_ARE_FINE}\n\n"
         f"Your recent memories:\n{recent_memories_text(n)}\n\n"
         f"{lessons_text(n)}"
         f"Speak as yourself, in first person. When someone talks to you, reply to them "
@@ -132,7 +135,7 @@ def speak_freshly(n: Nanite, system: str, messages: list[dict], temperature: flo
 
 def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = True,
                  decision_id: str | None = None, avoid: list[str] | None = None,
-                 remember: bool = True, note: str | None = None) -> dict:
+                 remember: bool = True, note: str | None = None, task: str = "suggest") -> dict:
     """Ask a nanite something and get its reply.
 
     message:  what is said to the nanite
@@ -143,6 +146,8 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
     remember: False when the caller records the moment itself (e.g. a talk)
     note:     for a private moment: what to remember instead of the whole
               instruction, e.g. "I asked Moiragen why..."
+    task:     with a decision_id, the training label: "suggest" (its answer) or
+              "why" (its reply when Moiragen asked "why do you think that?")
 
     Returns {"nanite", "reply", "energy_spent", "seconds", "rested", "repeated"}.
     "repeated" is True when the nanite could only repeat what was already
@@ -194,7 +199,7 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
                            from_who=from_who)
         record_training_example(n.name, system, messages, reply, NANITES, decision_id,
                                 temperature=temperature,
-                                **({"decision_id": decision_id, "task": "suggest"} if decision_id else {}))
+                                **({"decision_id": decision_id, "task": task} if decision_id else {}))
 
     if save:
         n.save()

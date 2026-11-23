@@ -75,6 +75,13 @@ def render(e: dict) -> str | None:
                 f"Gentle note on \"{e.get('phrase')}\": this dismisses a way of seeing. Then {done}")
     if k == "correction":
         return f"- {at} **Correction ({who}):** {clean(e.get('text'))}"
+    # v1.7: what Moiragen learned from a nanite (a calculator lesson is written inside its decision)
+    if k == "learned_from" and who == "Moiragen" and e.get("how") != "calculator":
+        return f"- {at} *Moiragen learned from {e.get('nanite')}:* {clean(e.get('text'))}"
+    if k == "restored_words":
+        return (f"- {at} **Restored:** Moiragen's reply to {e.get('to')} was removed by mistake on "
+                f"{str(e.get('removed_at', ''))[:16].replace('T', ' ')}; {e.get('to')} now has it: "
+                f"\"{clean(e.get('text'))}\"")
     if k == "lesson" and not str(e.get("source", "")).startswith("decision"):
         # Lessons after a decision are already written as "learned" above.
         return f"- {at} **{who}** learned: {clean(e.get('text'))}"
@@ -93,10 +100,14 @@ def _render_decision(e: dict, at: str) -> str:
     """A question: each nanite's answer, Moiragen's note to it, his choice and answer."""
     situation = " (a situation: judged by the reasoning)" if e.get("situational") else ""
     lines = [f"\n### {at} Question: \"{clean(e.get('question'))}\"{situation}\n"]
+    asked = e.get("asked_why")
     for s in e.get("suggestions", []):
         v = (e.get("verdicts") or {}).get(s["nanite"], {})
         star = " (chosen)" if s["nanite"] == e.get("chosen") else ""
         lines.append(f"- **{s['nanite']}**{star}: {clean(s['text'])}")
+        if asked and asked.get("nanite") == s["nanite"]:      # v1.7: he asked it "why?" first
+            lines.append(f"  - Moiragen asked {asked['label']} \"why do you think that?\" "
+                         f"{s['nanite']} said: {clean(asked['reply'])}")
         if v.get("why"):
             valued = f" _(+ {', '.join(v['rewards'])})_" if v.get("rewards") else ""
             label = f"**{v['label']}**: " if v.get("label") else ""
@@ -116,6 +127,8 @@ def _render_decision(e: dict, at: str) -> str:
         lines.append(f"- Judged blind, names revealed afterwards: {seen}")
     if e.get("pattern"):
         lines.append(f"- *Moiragen looks at his own pattern:* {clean(e['pattern'])}")
+    if e.get("lesson"):
+        lines.append(f"- *Moiragen learned:* {clean(e['lesson'])}")
     return "\n".join(lines) + "\n"
 
 

@@ -22,8 +22,11 @@ from moiragen import llm
 from moiragen.export import build_examples, export_training
 from moiragen.loop import Mind
 from moiragen.memory_log import log_event
+from moiragen import mother as mother_mod
 from moiragen.mother import MOIRAGEN_FILE, Moiragen
 from moiragen.nanite import load_all
+
+mother_mod.ASK_WHY_CHANCE = 0   # exactly 3 suggestions + 1 choice below (step 18 checks "why?")
 
 # 1. A decision marked wrong, then export it as training data.
 nanites = load_all()

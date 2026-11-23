@@ -85,6 +85,9 @@
           <p class="changed" id="d-changed" hidden></p>
           <!-- He judged blind; with the names revealed he looks at his own pattern -->
           <p class="muted" id="d-pattern" hidden></p>
+          <!-- v1.7: he asked one answer "why do you think that?", and what he learned from a nanite -->
+          <p class="muted" id="d-asked-why" hidden></p>
+          <p class="muted" id="d-lesson" hidden></p>
           <div class="feedback" id="d-feedback">
             <span class="muted" id="d-feedback-ask">Was he right? Say why, so they can learn:</span>
             <input id="d-why" placeholder="A short reason…" maxlength="300" aria-label="Your reason">
@@ -96,6 +99,10 @@
             <button data-verdict="thoughtful" data-kind="situation" hidden>Thoughtful</button>
             <button data-verdict="okay" data-kind="situation" hidden>Okay</button>
             <button data-verdict="needs_care" data-kind="situation" hidden>Needs more care</button>
+            <!-- On "Wrong": which nanite was right, so he learns what it saw (optional) -->
+            <label class="muted" id="d-right-box">
+              Who was right? <select id="d-right" aria-label="Who was right"><option value="">(optional)</option></select>
+            </label>
             <label class="muted" id="d-harmful-box" hidden>
               <input type="checkbox" id="d-harmful"> This answer was unkind, dishonest or harmful
             </label>

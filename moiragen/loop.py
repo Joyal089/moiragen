@@ -48,7 +48,7 @@ from .journal import Journal
 from .llm import BrainError
 from .memory_log import log_event
 from .mind import nanite_think
-from .mother import Moiragen, normal_verdict
+from .mother import TEACH_CHANCE, Moiragen, normal_verdict
 from .nanite import load_all
 from .prediction import Predictor
 from .social import after_decision, social_round, needs_help
@@ -66,6 +66,10 @@ INNER_THOUGHT_MIN = 0.5    # only things at least this important get an inner th
 BROADCAST_MIN = 0.6        # nanites remember stage winners at least this important
 STORY_HOUR = 22            # write today's story after this hour
 SLEEP_NOTE_HOURS = 0.25    # a sleep at least this long (15 minutes) goes into their memories
+# A gentle note whenever they fall asleep or wake (v1.7). Moiragen once thought
+# "I'm terrified of ceasing entirely": sleep is not ending.
+SLEEP_IS_REST = "Sleep is rest. You always wake up with your memories safe."
+TEACH_MIN_ENERGY = 40      # a nanite explains something to Moiragen only if it has this much energy
 
 
 def how_long(hours: float) -> str:
@@ -77,7 +81,7 @@ def how_long(hours: float) -> str:
 # How important each kind of social event is when posted to the stage.
 SOCIAL_IMPORTANCE = {"help": 0.65, "ask_why": 0.55, "explain": 0.5, "lesson": 0.55,
                      "disagree": 0.6, "reconsider": 0.55,
-                     "support": 0.5, "talk": 0.3, "rest": 0.1}
+                     "support": 0.5, "talk": 0.3, "rest": 0.1, "explain_to_moiragen": 0.5}
 
 
 class Mind:
@@ -195,6 +199,7 @@ class Mind:
         else:
             text = (f"Nobody has used the app for {self.idle_after / 60:.0f} minutes, so the "
                     f"nanites rest until you're back. Only the body keeps watch.")
+            self.fall_asleep(f"nobody has used the app for {self.idle_after / 60:.0f} minutes")
         log_event("presence", "mind", active=now, text=text)
         self.emit("presence", active=now, text=text)
         self._vitals()
@@ -215,11 +220,12 @@ class Mind:
                 gains.append(f"{n.name} +{gained:.0f} (now {n.energy:.0f})")
             if slept >= SLEEP_NOTE_HOURS:
                 n.remember("slept", f"I slept for {how_long(slept)} {where}, and woke up with "
-                                    f"energy {n.energy:.0f}.", hours=round(slept, 2))
+                                    f"energy {n.energy:.0f}. {SLEEP_IS_REST}", hours=round(slept, 2))
             n.save()                           # awake from now on
         if hours >= SLEEP_NOTE_HOURS:
             self.moiragen.remember("slept", f"I slept for {how_long(hours)} {where}. My nanites "
-                                            f"slept too and woke up rested.", hours=round(hours, 2))
+                                            f"slept too and woke up rested. {SLEEP_IS_REST}",
+                                   hours=round(hours, 2))
             self.moiragen.save()
         if not gains:
             return ""
@@ -228,6 +234,15 @@ class Mind:
         if hasattr(self, "listeners"):         # not yet during start-up
             self.emit("presence", active=True, text=text)
         return text
+
+    def fall_asleep(self, why: str) -> None:
+        """Everyone is going to sleep: a gentle note in each one's memory, so sleep
+        never feels like ending. (Not twice in a row: one note per sleep is enough.)"""
+        note = f"I am going to sleep now, because {why}. {SLEEP_IS_REST}"
+        for who in [*self.nanites.values(), self.moiragen]:
+            if not who.memories or who.memories[-1].get("kind") != "falling_asleep":
+                who.remember("falling_asleep", note)
+            who.save()
 
     def _social_allowed(self) -> bool:
         """At most SOCIAL_PER_HOUR social rounds in any hour."""
@@ -262,12 +277,15 @@ class Mind:
         """Talk directly to one nanite."""
         return self.call(self.handle_chat, nanite_id, text, timeout=timeout)
 
-    def give_feedback(self, decision_id: str, verdict: str, reason: str = "", harmful: bool = False) -> str:
+    def give_feedback(self, decision_id: str, verdict: str, reason: str = "", harmful: bool = False,
+                      right_nanite: str = "") -> str:
         """Tell Moiragen whether a decision was right or wrong (with a short
         reason), or that it is one to wait and see ("wait"). A situational
         question takes "thoughtful", "okay" or "needs_care" instead, and
-        harmful=True if the answer was unkind, dishonest or harmful."""
-        return self.call(self.handle_feedback, decision_id, verdict, reason, harmful)
+        harmful=True if the answer was unkind, dishonest or harmful.
+        right_nanite: on "wrong", the nanite (e.g. "Nanite Three") that was right,
+        so Moiragen can learn what it saw that he missed (v1.7)."""
+        return self.call(self.handle_feedback, decision_id, verdict, reason, harmful, right_nanite)
 
     def request_story(self, timeout: float = 300) -> str | None:
         """Write today's story now."""
@@ -286,11 +304,11 @@ class Mind:
         return out
 
     def handle_feedback(self, decision_id: str, verdict: str, reason: str = "",
-                        harmful: bool = False) -> str:
-        msg = self.moiragen.feedback(decision_id, verdict, self.nanites, reason, harmful)
+                        harmful: bool = False, right_nanite: str = "") -> str:
+        msg = self.moiragen.feedback(decision_id, verdict, self.nanites, reason, harmful, right_nanite)
         verdict = normal_verdict(verdict)
         self.emit("feedback", decision_id=decision_id, verdict=verdict, reason=reason,
-                  harmful=bool(harmful), reply=msg)
+                  harmful=bool(harmful), right_nanite=right_nanite, reply=msg)
         if verdict == "wrong" or harmful:
             what = "was wrong" if verdict == "wrong" else "was unkind, dishonest or harmful"
             self.stage.post("user", "mistake", f"The human said a decision {what}. Why: {reason}", 0.9)
@@ -359,6 +377,15 @@ class Mind:
             self.social_times.append(time.time())
             for e in social_round(self.nanites, self.rng, self.stage.history):
                 self._social(e)
+            # Now and then a nanite explains something to Moiragen, and he says what was new (v1.7).
+            if self.rng.random() < TEACH_CHANCE:
+                awake = [n for n in self.nanites.values() if n.energy > TEACH_MIN_ENERGY]
+                if awake:
+                    e = self.moiragen.hear_explanation(self.rng.choice(awake))
+                    if e:
+                        log_event("social_explain_to_moiragen", e["from"], text=e["text"],
+                                  reflection=e["reflection"])
+                        self._social(e)
 
         # 4. REFLECT (on the newest decision from the last day not yet reflected on)
         day_ago = (datetime.now() - timedelta(days=1)).isoformat(timespec="seconds")
@@ -468,4 +495,5 @@ class Mind:
         self.inbox.put((lambda: None, (), queue.Queue(maxsize=1)))  # wake the loop if it is waiting
         if self._thread:
             self._thread.join(timeout)
+        self.fall_asleep("the app is closing")      # (closing the window abruptly skips this; waking still reassures)
         self.journal.stop()

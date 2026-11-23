@@ -20,7 +20,9 @@ Endpoints:
                          reason is required), or "wait" (wait and see; reason = what to check).
                          A situational question ("What would you do if...?") takes
                          "thoughtful", "okay" or "needs_care" (with a reason), plus
-                         "harmful": true if the answer was unkind, dishonest or harmful
+                         "harmful": true if the answer was unkind, dishonest or harmful.
+                         On "wrong", "right_nanite" (optional) names the nanite that was
+                         right, so Moiragen writes what it saw that he missed.
     POST /api/story      write today's story now
     POST /api/active     "I'm here": the viewer sends this when you move the mouse or type
                          (at most once a minute). Without any sign of you for 10 minutes,
@@ -60,6 +62,7 @@ class FeedbackBody(BaseModel):
     verdict: str          # "right", "wrong" or "wait"; situational: "thoughtful", "okay", "needs_care"
     reason: str = ""      # required for every verdict except wait: the nanites learn from it
     harmful: bool = False # situational only: unkind, dishonest or harmful (the only kind that costs health)
+    right_nanite: str = "" # on "wrong": the nanite that was right, so Moiragen learns from it (v1.7)
 
 
 class Broadcaster:
@@ -144,7 +147,7 @@ def create_app(mind: Mind | None = None, start_mind: bool = True) -> FastAPI:
     @app.post("/api/feedback")
     async def feedback(body: FeedbackBody):
         reply = await run_job(app.state.mind.give_feedback, body.decision_id, body.verdict,
-                              body.reason, body.harmful)
+                              body.reason, body.harmful, body.right_nanite)
         return {"reply": reply}
 
     @app.post("/api/story")

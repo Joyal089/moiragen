@@ -302,6 +302,17 @@ function showDecision(d) {
   if (ch) $("d-changed").textContent = `${ch.by} disagreed, and Moiragen changed his choice from ${ch.from}: ${ch.why}`;
   $("d-pattern").hidden = !d.pattern;
   if (d.pattern) $("d-pattern").textContent = `Judged blind. With the names revealed, he notices: ${d.pattern}`;
+  const aw = d.asked_why;
+  $("d-asked-why").hidden = !aw;
+  if (aw) $("d-asked-why").textContent = `Before choosing, he asked ${aw.label} (${aw.nanite}) “why do you think that?” It said: ${aw.reply}`;
+  $("d-lesson").hidden = !d.lesson;
+  if (d.lesson) $("d-lesson").textContent = `He learned: ${d.lesson}`;
+  // "Who was right?" (only for ordinary questions): the nanites he did not choose.
+  const others = (d.suggestions || []).map((s) => s.nanite).filter((n) => n !== d.chosen);
+  $("d-right").replaceChildren(html("option", "", "(optional)"),
+    ...others.map((n) => { const o = html("option", "", n); o.value = n; return o; }));
+  $("d-right").options[0].value = "";
+  $("d-right-box").hidden = d.situational || !others.length;
   $("d-verdict").hidden = false;
   // A situational question gets Thoughtful / Okay / Needs more care instead of Right / Wrong.
   const kind = d.situational ? "situation" : "fact";
@@ -322,7 +333,9 @@ function showDecision(d) {
 // Send your verdict. Every verdict except "wait and see" needs a reason the
 // nanites can learn from; "wait and see" may say what to check later.
 // harmful: situational questions only, the "unkind, dishonest or harmful" box.
-async function sendVerdict(decisionId, verdict, reasonInput, resultEl, buttons, harmful = false) {
+// rightNanite: on "Wrong", the nanite that was right (optional), so he can learn from it.
+async function sendVerdict(decisionId, verdict, reasonInput, resultEl, buttons, harmful = false,
+                           rightNanite = "") {
   const reason = reasonInput.value.trim();
   if (verdict !== "wait" && !reason) {
     resultEl.textContent = "Please add a short reason first, so the nanites can learn from it.";
@@ -331,7 +344,8 @@ async function sendVerdict(decisionId, verdict, reasonInput, resultEl, buttons, 
   }
   buttons.forEach((b) => (b.disabled = true));
   try {
-    const r = await post("/api/feedback", { decision_id: decisionId, verdict, reason, harmful });
+    const right_nanite = verdict === "wrong" ? rightNanite : "";
+    const r = await post("/api/feedback", { decision_id: decisionId, verdict, reason, harmful, right_nanite });
     resultEl.textContent = `Moiragen: ${r.reply}`;
     reasonInput.value = "";
   } catch (err) {
@@ -345,7 +359,7 @@ $("d-feedback").addEventListener("click", (ev) => {
   if (!btn || !currentDecision) return;
   sendVerdict(currentDecision, btn.dataset.verdict, $("d-why"), $("d-feedback-result"),
               [...$("d-feedback").querySelectorAll("button")],
-              btn.dataset.kind === "situation" && $("d-harmful").checked);
+              btn.dataset.kind === "situation" && $("d-harmful").checked, $("d-right").value);
 });
 
 // "Waiting to see": answers that can only be judged once the result is known.
@@ -492,6 +506,7 @@ const SOCIAL = {
   disagree:   { pulse: "ask",  feed: "disagrees" },
   reconsider: { pulse: "ask",  feed: "reconsiders" },
   rest:    { pulse: null,      feed: null },
+  explain_to_moiragen: { pulse: "ask", feed: "teaches Moiragen" },   // v1.7
 };
 
 function handleEvent(e) {
@@ -567,8 +582,18 @@ function handleEvent(e) {
       bubble(e.from, e.action === "lesson" ? `I learned: ${e.text}` : e.text, kind);
       const toWhom = e.to && e.to !== e.from ? ` → ${e.to}` : "";
       feed(s.feed || e.action, `${e.from}${toWhom}: ${e.text}`, e.time);
+      if (e.reflection) {   // a nanite explained something to him: what was new to him
+        bubble("Moiragen", e.reflection, "inner");
+        feed("reflection", `Moiragen, on what ${e.from} explained: ${e.reflection}`, e.time);
+      }
       break;
     }
+
+    case "asked_why":            // v1.7: before choosing, he asked one answer "why?"
+      bubble(e.nanite, e.text, "suggest");
+      pulse("Moiragen", e.nanite, "ask");
+      feed("ask why", `Moiragen asked ${e.label} (${e.nanite}) “why do you think that?” ${e.text}`, e.time);
+      break;
 
     case "inner":
       bubble("Moiragen", e.text, "inner");

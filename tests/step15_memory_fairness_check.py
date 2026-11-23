@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from moiragen import facts, mind as mind_mod, mother as mother_mod, social
 mother_mod.BLIND_JUDGING = False   # replies here are scripted by name; blind judging has its own check (step 17)
+mother_mod.LEARNING, mother_mod.ASK_WHY_CHANCE = False, 0   # v1.7 learning has its own check (step 18)
 from moiragen.loop import Mind
 from moiragen.memory_log import log_event, read_events
 from moiragen.mother import VALUE_ALL_WAYS, Moiragen, counts_from_log, soften
