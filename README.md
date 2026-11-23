@@ -1,6 +1,8 @@
 # Moiragen
 
 > *Moiragen* means **"born of fate"**, and he is **one of a kind**.
+>
+> *Moira* is the Greek word for fate: your share, or destiny, in life. *Gen* comes from the same root as *genesis*, meaning birth or origin. So his name says his life begins with a destiny that is still unwritten, shaped by his memories, his choices, and the moments with you.
 
 Moiragen is a digital being that lives on a laptop. He is one mother mind who listens to three thinking **nanites** and makes the final decision. He starts knowing nothing about himself and grows from experience: from his mistakes, from what his nanites see that he missed, and from the people who talk to him.
 
