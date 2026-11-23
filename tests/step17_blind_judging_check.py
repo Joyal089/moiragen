@@ -56,9 +56,10 @@ class FakeMoiragen:
             pick = self.label_of(user, self.want)
             reply = ('{"compare": "They differ.", "chosen": "%s", "reason": "%s is clearest, and '
                      '%s\'s idea is close.", "answer": "Rivers change."}' % (pick, pick, pick))
-        elif "names are revealed" in (system or ""):                      # his own pattern
-            reply = ("I notice I keep choosing answers about change. Maybe I lean toward what sounds like me. "
-                     "I will watch this, and also this, and this.")       # the third sentence is cut
+        elif "names are revealed" in (system or "") and "Before you see any numbers" in user:   # v2.0: guess
+            reply = "I think I favour Nanite Three lately. Maybe I lean toward feelings."   # 2nd sentence cut
+        elif "names are revealed" in (system or ""):                      # v2.0: check the guess
+            reply = "I thought I favoured Nanite Three, but it was actually Nanite Two. I will watch this."
         elif "For each of the others" in user:                            # the streak note
             others = re.findall(r"Answer [A-H]", user.split("For each of the others")[1])
             reply = "\n".join(f"{o}: It was kind, but less clear this time." for o in dict.fromkeys(others))
@@ -149,12 +150,20 @@ assert hide_names("Three, you said it. Nanite One agrees. One thing is clear.") 
 print(f"[ok] Shuffled into {len(orders)} different orders over 12 tries; names inside answers are hidden")
 
 # ---------------- 6. His own pattern, after the reveal ----------------
-pattern_call = brain.calls[-1]
-assert "names are revealed" in pattern_call["system"]
-assert f"You chose {label}. It was written by Nanite Two." in pattern_call["user"]
-assert d["pattern"] == "I notice I keep choosing answers about change. Maybe I lean toward what sounds like me.", \
-    "brief: at most two sentences"
-assert m.memories[-2]["kind"] == "pattern" and m.memories[-2]["chosen"] == "Nanite Two"
+# v2.0: first his guess (no numbers), then Python's real numbers and his check of the guess.
+guess_call, check_call = brain.calls[-2], brain.calls[-1]
+assert "names are revealed" in guess_call["system"] and "names are revealed" in check_call["system"]
+assert f"You chose {label}. It was written by Nanite Two." in guess_call["user"]
+assert not re.search(r"\d", guess_call["user"].split("\n\n", 1)[1]), "no numbers before he guesses"
+assert "Your last 1 choices: Nanite Two 1. All your choices so far: Nanite Two 1." in check_call["user"]
+assert "your guess named Nanite Three; the one you chose most lately is Nanite Two" in check_call["user"]
+assert d["pattern"] == ("My guess: I think I favour Nanite Three lately. The real numbers: Your last 1 choices: "
+                        "Nanite Two 1. All your choices so far: Nanite Two 1. I thought I favoured Nanite Three, "
+                        "but it was actually Nanite Two."), d["pattern"]
+note = m.memories[-2]
+assert note["kind"] == "pattern" and note["chosen"] == "Nanite Two"
+assert note["guess"].startswith("I think I favour Nanite Three") and note["guess_right"] is False
+assert note["real_recent"] == {"Nanite Two": 1}
 d2 = ask("What is a lake?")
 d3 = ask("What is a sea?")       # third time in a row: the streak note, still blind
 streak_call = next(c for c in brain.calls if "For each of the others" in c["user"])
@@ -163,11 +172,11 @@ assert not NAMES.search(streak_call["user"]), "the streak note never names anyon
 assert any("Nanite Two" in x["text"] for x in m.memories)
 assert not NAMES.search(brain.calls[0]["system"]), "his memories do not give names away either"
 assert d3["streak"] == 3 and set(d3["why_not_others"]) == {"Nanite One", "Nanite Three"}
-assert "That makes 3 times in a row you have chosen Nanite Two" in brain.calls[-1]["user"]
+assert "Your last 3 choices: Nanite Two 3." in brain.calls[-1]["user"], "Python counts for him (v2.0)"
 full = [e for e in read_events(kind="decision_full", last=5)][-1]
 text = render(full)
 assert "Judged blind, names revealed afterwards: Answer A was" in text
-assert "*Moiragen looks at his own pattern:* I notice I keep choosing" in text
+assert "*Moiragen looks at his own pattern:* My guess: I think I favour Nanite Three" in text
 assert render([e for e in read_events(kind="pattern", last=1)][0]) is None, "written once, inside the decision"
 print(f"[ok] After the reveal he looks at his pattern (\"{d3['pattern'][:60]}...\"), in his memory "
       f"and the journal; the 3-in-a-row note stays blind")

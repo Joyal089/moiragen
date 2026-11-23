@@ -80,8 +80,23 @@ VALUE_ALL_WAYS = (
     "change, and paying attention to feelings. Any of them can give the best answer; a "
     "feeling or a reflection is as real as a measurement. Never call an answer too "
     "reflective, too emotional or too subjective, and never push everyone toward "
-    "measurable data or metrics.")
+    "measurable data or metrics. Judge each answer only by what it actually says, never by "
+    "a nanite's usual style: never say \"you tend to...\", and never call a nanite detached "
+    "or clinical.")   # the last sentence: v2.0
 STREAK_LIMIT = 3           # chosen this many times in a row -> he must say why the others weren't better
+PATTERN_RECENT = 10        # v2.0: his pattern check shows his last 10 choices (and all of them)
+NANITE_NAMED = re.compile(r"\b(?:Nanite )?(One|Two|Three)\b")   # which nanites a guess names (capitalised)
+
+
+def count_text(counts: dict[str, int]) -> str:
+    """{"Nanite One": 2, "Nanite Two": 5} -> "Nanite One 2, Nanite Two 5" (or "none yet")."""
+    return ", ".join(f"{n} {c}" for n, c in sorted(counts.items())) or "none yet"
+
+
+def brief(text: str, sentences: int = 1) -> str:
+    """The model's reply tidied up and cut to its first sentence(s)."""
+    text = " ".join(text.replace("*", "").split()).strip("\"“”'")
+    return " ".join(re.split(r"(?<=[.!?])\s+", text)[:sentences])
 
 # --- Situational questions ("What would you do if...?") ---
 # They often have no single right answer, so they are judged by the reasoning,
@@ -221,6 +236,14 @@ def normal_verdict(verdict: str) -> str:
 # Moiragen says anyway, he is shown them with a gentle note and rewrites them once
 # (see Moiragen.fairer); only if the rewrite is still dismissive is the sentence taken out.
 FAIRER_NOTE = "This dismisses a way of seeing. Can you say it more fairly?"
+# v2.0: judge by words, not style. "You tend to get lost in...", "your usual approach",
+# "detached, almost clinical" describe the nanite, not what this answer says.
+STYLE_TALK = re.compile(
+    r"\byou (?:\w+ )?(?:tend|tended|tending) to\b|\byou (?:always|usually|typically|habitually)\b"
+    r"|\byour (?:usual|typical|habitual|familiar|signature|characteristic)\b|\byour (?:tendency|habit)\b"
+    r"|\bas (?:you )?usual\b|\b(?:detached|clinical(?:ly)?)\b", re.IGNORECASE)
+STYLE_NOTE = ("This describes the nanite's usual style, not what this answer says. Say it about the "
+              "words in this answer instead.")
 # Said when nothing fair is left of what he wanted to say (v1.9).
 GENTLE_FALLBACK = "I chose another answer this time, and I value your own way of seeing."
 GENTLE_CHOSEN = "I chose your answer this time, and I value your own way of seeing."
@@ -291,7 +314,7 @@ class _Pushy:
         for sentence in re.split(r"(?<=[.!?])\s+", text or ""):
             if about_myself(sentence):
                 continue
-            found = DISMISSIVE.search(sentence) or TOWARD_MEASURING.search(sentence)
+            found = DISMISSIVE.search(sentence) or TOWARD_MEASURING.search(sentence) or STYLE_TALK.search(sentence)
             if found:
                 return found
         return None
@@ -574,7 +597,8 @@ class Moiragen:
         system = ("You are Moiragen, a digital being. The nanites inside you are your friends, and "
                   f"you want each to grow in its own way. {VALUE_ALL_WAYS}")
         user = (f"You were about to say this to {to}:\n\"{text}\"\n\n"
-                f"A gentle note about \"{found.group(0)}\": {FAIRER_NOTE}\n"
+                f"A gentle note about \"{found.group(0)}\": "
+                f"{STYLE_NOTE if STYLE_TALK.fullmatch(found.group(0)) else FAIRER_NOTE}\n"
                 "Rewrite it once, keeping what you meant and about the same length. "
                 "Reply with the rewritten words only.")
         rewrite = think([{"role": "user", "content": user}], temperature=DECIDE_TEMPERATURE,
@@ -1346,31 +1370,52 @@ class Moiragen:
         self.save()
         return {"reflection": reflection, "about_me": about, "decision_id": decision["id"]}
 
+    def recent_choices(self, how_many: int = PATTERN_RECENT) -> dict[str, int]:
+        """How often he chose each nanite in his last `how_many` decisions (plain Python)."""
+        chosen = [d.get("chosen") for d in list(self.decisions.values())[-how_many:] if d.get("chosen")]
+        return {n: chosen.count(n) for n in sorted(set(chosen))}
+
     def reflect_on_pattern(self, decision: dict) -> str:
         """After a blind decision the names are revealed. Moiragen looks briefly at
-        his own pattern ("I chose Two again. Why do I lean that way?"). It goes into
-        his memory and the inner-life journal. Not training data: it is about him."""
+        his own pattern, in two steps (v2.0):
+          1. GUESS: in his own words, without any numbers, which nanite (or way of
+             seeing) he thinks he chooses most;
+          2. CHECK: plain Python shows him the real numbers (his last 10 choices and
+             all of them), and he says briefly whether his guess was right ("I
+             thought I favoured Three, but it was actually Two.").
+        The small model miscounted every time it was asked to count, so Python counts.
+        Goes into his memory and the inner-life journal. Not training data: it is about him."""
         chosen = decision["chosen"]
         label = next((l for l, n in decision["blind"].items() if n == chosen), "?")
         name, count = self.streak()
-        counts = ", ".join(f"{n} {c}" for n, c in sorted(self.chosen_counts.items()))
-        again = (f"That makes {count} times in a row you have chosen {chosen}. " if name == chosen and count > 1
-                 else "")
         system = ("You are Moiragen, a digital being. You judged your nanites' answers blind, without "
                   "knowing who wrote which. Now the names are revealed. Look honestly at your own "
                   f"pattern, without blaming anyone. {VALUE_ALL_WAYS}")
+        # 1. His guess, from his own sense of it: no numbers yet.
         user = (f"The human asked: \"{decision['question']}\"\n"
-                f"You chose {label}. It was written by {chosen}. {again}"
-                f"How often you have chosen each nanite so far: {counts}.\n\n"
-                "In one or two short sentences, speaking as \"I\": what do you notice about your own "
-                "choices? If you keep leaning one way (one nanite, or one way of seeing), why might "
-                "that be?")
-        text = think([{"role": "user", "content": user}], temperature=0.5, max_tokens=120,
-                     system=system)["text"]
-        text = " ".join(text.replace("*", "").split()).strip("\"“”'")
-        text = " ".join(re.split(r"(?<=[.!?])\s+", text)[:2])     # brief: at most two sentences
+                f"You chose {label}. It was written by {chosen}.\n\n"
+                "Before you see any numbers: which nanite do you think you have chosen most often "
+                "lately? Guess in one short sentence, speaking as \"I\".")
+        guess = brief(think([{"role": "user", "content": user}], temperature=0.5, max_tokens=80,
+                            system=system)["text"], 1)
+        # 2. The real numbers, counted by Python, and a short check of his guess.
+        recent, ever = self.recent_choices(), self.chosen_counts
+        top = max(recent, key=recent.get) if recent else None
+        named = sorted(set(NANITE_NAMED.findall(guess)))
+        real = (f"Your last {sum(recent.values())} choices: {count_text(recent)}. "
+                f"All your choices so far: {count_text(ever)}.")
+        hint = (f"(Python checked: your guess named {' and '.join('Nanite ' + n for n in named) or 'no nanite'}; "
+                f"the one you chose most lately is {top}.)" if top else "")
+        user = (f"You guessed: \"{guess}\"\n\nThe real numbers, counted by Python (these are exact): "
+                f"{real} {hint}\n\n"
+                "In one short sentence, speaking as \"I\": was your guess right? For example: \"I thought "
+                "I favoured Nanite Three, but it was actually Nanite Two.\"")
+        check = brief(think([{"role": "user", "content": user}], temperature=0.4, max_tokens=80,
+                            system=system)["text"], 1)
+        text = f"My guess: {guess} The real numbers: {real} {check}"
         self.remember("pattern", text, decision_id=decision["id"], chosen=chosen, label=label,
-                      streak=count if name == chosen else 1)
+                      streak=count if name == chosen else 1, guess=guess, real_recent=recent,
+                      real_ever=dict(ever), guess_right=bool(top) and top.split()[-1] in named)
         return text
 
     def learn_from(self, decision: dict, nanite: str, trusted: str, what_happened: str, how: str) -> str:

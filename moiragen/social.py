@@ -20,7 +20,6 @@ from .echo import split_sentences
 from .memory_log import log_event
 from .mind import nanite_think, TIRED
 from .nanite import Nanite
-from .styles import ways_text
 from .topics import Topic, picker
 
 # --- Tunable numbers ---
@@ -182,7 +181,9 @@ def ask_why_not_chosen(n: Nanite, decision: dict, moiragen, nanites: dict[str, N
         return []
     question = (f"Why did you choose {decision['chosen']}'s answer instead of mine "
                 f"for \"{decision['question']}\"?")
-    explanation = moiragen.explain_choice(decision, n.name, mine, ways_text(nanites))
+    # No style notes here (v2.0): he explains by what the answers say, not by
+    # how each nanite usually sees things ("you tend to get lost in...").
+    explanation = moiragen.explain_choice(decision, n.name, mine)
     # The nanite thinks it over: a lesson, or an honest disagreement.
     answer = nanite_think(
         n,
