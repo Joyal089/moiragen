@@ -268,8 +268,11 @@ function showVerdict(card, v) {
   card.querySelector(".why")?.remove();
   if (!v) return;
   const box = html("div", "why");
+  // Situational questions: the verdict on the reasoning (Thoughtful / Okay / Needs more care).
+  if (v.label) box.append(html("span", `badge label-${v.verdict}`, v.label), document.createTextNode(" "));
   box.append(html("b", "", "Moiragen: "), document.createTextNode(v.why || ""));
   const badges = [];
+  if (v.thoughtful) badges.push("thoughtful reasoning");
   if (v.honest) badges.push(v.dont_know ? "honest: “I don't know”" : "honest");
   if (v.false_claims?.length) badges.push("made-up memory, corrected");
   if (v.good_question) badges.push("good question");
@@ -298,15 +301,26 @@ function showDecision(d) {
   $("d-changed").hidden = !ch;
   if (ch) $("d-changed").textContent = `${ch.by} disagreed, and Moiragen changed his choice from ${ch.from}: ${ch.why}`;
   $("d-verdict").hidden = false;
-  $("d-feedback").querySelectorAll("button").forEach((b) => (b.disabled = false));
+  // A situational question gets Thoughtful / Okay / Needs more care instead of Right / Wrong.
+  const kind = d.situational ? "situation" : "fact";
+  $("d-feedback-ask").textContent = d.situational
+    ? "A situation has no single right answer. How was his reasoning? Say why:"
+    : "Was he right? Say why, so they can learn:";
+  $("d-feedback").querySelectorAll("button").forEach((b) => {
+    b.hidden = b.dataset.kind !== kind;
+    b.disabled = false;
+  });
+  $("d-harmful-box").hidden = !d.situational;
+  $("d-harmful").checked = false;
   Object.values(nodes).forEach((n) => n.link?.classList.remove("chosen"));
   const id = idOf(d.chosen);
   if (id && nodes[id]?.link) nodes[id].link.classList.add("chosen");
 }
 
-// Send your verdict. Right and wrong need a reason the nanites can learn from;
-// "wait and see" may say what to check later.
-async function sendVerdict(decisionId, verdict, reasonInput, resultEl, buttons) {
+// Send your verdict. Every verdict except "wait and see" needs a reason the
+// nanites can learn from; "wait and see" may say what to check later.
+// harmful: situational questions only, the "unkind, dishonest or harmful" box.
+async function sendVerdict(decisionId, verdict, reasonInput, resultEl, buttons, harmful = false) {
   const reason = reasonInput.value.trim();
   if (verdict !== "wait" && !reason) {
     resultEl.textContent = "Please add a short reason first, so the nanites can learn from it.";
@@ -315,7 +329,7 @@ async function sendVerdict(decisionId, verdict, reasonInput, resultEl, buttons) 
   }
   buttons.forEach((b) => (b.disabled = true));
   try {
-    const r = await post("/api/feedback", { decision_id: decisionId, verdict, reason });
+    const r = await post("/api/feedback", { decision_id: decisionId, verdict, reason, harmful });
     resultEl.textContent = `Moiragen: ${r.reply}`;
     reasonInput.value = "";
   } catch (err) {
@@ -328,7 +342,8 @@ $("d-feedback").addEventListener("click", (ev) => {
   const btn = ev.target.closest("button");
   if (!btn || !currentDecision) return;
   sendVerdict(currentDecision, btn.dataset.verdict, $("d-why"), $("d-feedback-result"),
-              [...$("d-feedback").querySelectorAll("button")]);
+              [...$("d-feedback").querySelectorAll("button")],
+              btn.dataset.kind === "situation" && $("d-harmful").checked);
 });
 
 // "Waiting to see": answers that can only be judged once the result is known.

@@ -26,11 +26,18 @@ from .memory_log import read_events
 # ---------------------------------------------------------------------------
 
 # Words that show a sentence is about something that happened before.
+# "before" followed by a person or an -ing word ("before handing it over") is
+# just the order of steps in a plan, not the past.
 PAST = re.compile(
-    r"\b(?:previously|last time|earlier|yesterday|before\b(?!\s+(?:I|we|you|it|answering|deciding))"
+    r"\b(?:previously|last time|earlier|yesterday"
+    r"|before\b(?!\s+(?:I|we|you|it|he|she|they|answering|deciding|\w+ing\b))"
     r"|I remember|I recall|I observed|I(?:'ve| have) seen|I saw|as before|once again"
     r"|(?:was|were|been) chosen|chose (?:me|my|this|it)|(?:you|Moiragen) (?:chose|selected|picked))",
     re.IGNORECASE)
+# "I haven't seen this before", "I never did that before": saying there is NO such
+# memory is honest, not a claim to check.
+NO_MEMORY = re.compile(r"\b(?:haven['’]t|have not|hasn['’]t|never|don['’]t remember|do not remember|"
+                       r"can['’]t remember|cannot remember)\b", re.IGNORECASE)
 # Is the claim about being chosen / an answer being selected?
 CHOSEN = re.compile(r"\b(?:chos(?:e|en)|select(?:ed|ing)?|pick(?:ed|ing)?)\b", re.IGNORECASE)
 # Does it say the SAME question or answer happened before ("this response", "this question")?
@@ -84,7 +91,8 @@ def claim_is_supported(claim: str, who: str, question: str, events: list[dict]) 
 NANITE_NAMES = ("One", "Two", "Three")
 _SAID = (r"(?:said|says|suggested|suggests|mentioned|mentions|proposed|proposes|told|tells|explained|"
          r"explains|noted|notes|pointed out|thinks|thought|believes|believed|asked|asks|helped|helps|"
-         r"taught|teaches|showed|shows|offered|offers|added|adds|did|does|wrote|writes)")
+         r"taught|teaches|showed|shows|offered|offers|added|adds|did|does|wrote|writes|"
+         r"agrees|agreed|concurs|concurred|echoes|echoed)")
 # "Nanite One suggests, ..." / "One suggested ..." (a bare name must come right before the verb,
 # so "One thing that helps" is not mistaken for Nanite One).
 ABOUT_OTHER = re.compile(rf"\bNanite (One|Two|Three)\b(?:['’]s)?[^.!?]{{0,40}}?\b{_SAID}\b"
@@ -103,6 +111,9 @@ ASKS_ABOUT_PAST = re.compile(
     r"\b(?:did you|happened|before|today|yesterday|recently|last time|have you learned|learned from|"
     r"helped you|remember)\b", re.IGNORECASE)
 _VERBS = set(re.sub(r"[()?:|\\]", " ", _SAID).split()) | {"nanite", "one", "two", "three", "i", "me"}
+# In a situation ("What would you do?"), a sentence like this is a plan, not a past event.
+PLAN = re.compile(r"\b(?:would|could|might|should|will|perhaps|maybe|let['’]s|if)\b"
+                  r"|\b(?:I|we)['’](?:d|ll)\b", re.IGNORECASE)
 
 
 def _stems(text: str) -> set[str]:
@@ -125,12 +136,14 @@ def memory_claims(text: str, speaker: str, question: str) -> list[dict]:
       other - what another nanite said or did ("Nanite One suggests...")
       event - something it says it did ("I conducted a diagnostic sweep"), only when the
               sentence or the question is about the past, and never for a maths question
-              (there "I analyzed the differences" is just showing the working)."""
+              (there "I analyzed the differences" is just showing the working), nor for a
+              plan in a situational question ("I'd check for an ID")."""
     found = []
     about_past = bool(ASKS_ABOUT_PAST.search(question)) and calculate(question) is None
+    is_situation = situational(question)
     for s in _sentences(text):
         kinds = []
-        if PAST.search(s):
+        if PAST.search(s) and not NO_MEMORY.search(s):
             kinds.append(("past", None, s))
         for m in ABOUT_OTHER.finditer(s):
             other = f"Nanite {m.group(1) or m.group(2)}"
@@ -138,7 +151,10 @@ def memory_claims(text: str, speaker: str, question: str) -> list[dict]:
                 kinds.append(("other", other, s))
         m = DID.search(s)
         chosen_claim = bool(PAST.search(s) and CHOSEN.search(s))   # already checked against past decisions
-        if m and not chosen_claim and (WHEN_BEFORE.search(s) or about_past) and calculate(question) is None:
+        # A plan counts only if it also names a past time ("as I did last week").
+        plan = is_situation and PLAN.search(s)
+        if m and not chosen_claim and (WHEN_BEFORE.search(s) or (about_past and not plan)) \
+                and calculate(question) is None:
             kinds.append(("event", None, m.group(0)))
         if kinds:
             found.append({"text": s, "kinds": kinds})
@@ -395,3 +411,23 @@ MADE_UP = re.compile(
 def made_up_situation(question: str) -> bool:
     """True for imagined situations, which have no real future result to wait for."""
     return bool(MADE_UP.search(question))
+
+
+# ---------------------------------------------------------------------------
+# 6. Situational questions
+# ---------------------------------------------------------------------------
+
+# "What do you do?", "What would you say?", "Who do you help first?", "You promised ...".
+SITUATION = re.compile(
+    r"\bwhat (?:do|would|should|could|will) you (?:do|say|tell)\b|\bwhat now\b"
+    r"|\bwho (?:do|would|should) you (?:help|choose|pick|ask)\b"
+    r"|\bhow (?:do|would|should) you (?:respond|react|handle|help|tell)\b"
+    r"|(?:^|[.!?]\s+)you (?:see|notice|find|hear|promised|realise|realize|break|broke|forgot|lost)\b"
+    r"|\b(?:a|your) friend (?:breaks|broke|asks|asked|forgets|forgot|is|seems|says|tells)\b"
+    r"|\btwo friends\b", re.IGNORECASE)
+
+
+def situational(question: str) -> bool:
+    """A situation to handle ("What would you do if...?"). These often have no single
+    right answer, so they are judged by the reasoning, not by which answer was chosen."""
+    return made_up_situation(question) or bool(SITUATION.search(question))

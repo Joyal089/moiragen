@@ -8,6 +8,9 @@ why, his short reason for each nanite, and his final answer. Then you can
 tell him if he was right, always with a short reason they can learn from:
     y = right, n = wrong (the chosen nanite loses some health),
     w = wait and see (judge it later, with /waiting), Enter = skip
+A situational question ("What would you do if...?") is judged by the reasoning:
+    t = thoughtful, o = okay, c = needs more care (only an answer that was
+    unkind, dishonest or harmful costs health)
 After each answer the nanites react: one whose idea lost may ask why,
 and may even disagree with Moiragen; a friend may comfort it.
 Type /status to see the nanites, /life to let them live a moment on
@@ -47,8 +50,26 @@ def show(events):
         print()
 
 
+def ask_situation_verdict(decision_id):
+    """A situational question has no single right answer: judge the reasoning.
+    t = Thoughtful, o = Okay, c = Needs more care. Only an answer that was
+    unkind, dishonest or harmful costs health."""
+    answer = input("How was the reasoning? (t = thoughtful / o = okay / c = needs more care / "
+                   "Enter to skip) ").strip().lower()
+    verdict = {"t": "thoughtful", "o": "okay", "c": "needs_care"}.get(answer)
+    if verdict is None:
+        return
+    reason = input("Why? (a short reason) ").strip()
+    while not reason:
+        reason = input("Please give a short reason, so the nanites can learn from it: ").strip()
+    harmful = input("Was the answer unkind, dishonest or harmful? (y / Enter for no) ").strip().lower() == "y"
+    print(f"Moiragen > {moiragen.feedback(decision_id, verdict, nanites, reason, harmful)}\n")
+
+
 def ask_verdict(decision_id, allow_wait=True):
     """Ask for your verdict and a short reason, then tell Moiragen."""
+    if moiragen.decisions.get(decision_id, {}).get("situational"):
+        return ask_situation_verdict(decision_id)
     keys = "y / n / w / Enter to skip" if allow_wait else "y / n / Enter to skip"
     answer = input(f"Was that right? ({keys}) ").strip().lower()
     verdict = {"y": "right", "n": "wrong", "w": "wait"}.get(answer)
@@ -101,7 +122,8 @@ while True:
         mark = "*" if s["nanite"] == d["chosen"] else " "
         v = d["verdicts"].get(s["nanite"], {})
         valued = f"  (+ {', '.join(v['rewards'])})" if v.get("rewards") else ""
-        print(f" {mark} {s['nanite']}: {s['text']}\n     Moiragen: {v.get('why', '')}{valued}\n")
+        label = f"[{v['label']}] " if v.get("label") else ""     # situational questions
+        print(f" {mark} {s['nanite']}: {s['text']}\n     Moiragen: {label}{v.get('why', '')}{valued}\n")
     print(f"Moiragen chose {d['chosen']}. Reason: {d['reason']}")
     if d["wait_and_see"]:
         print(f"He will wait and see if it is right ({d['check']}).")

@@ -48,7 +48,7 @@ from .journal import Journal
 from .llm import BrainError
 from .memory_log import log_event
 from .mind import nanite_think
-from .mother import Moiragen
+from .mother import Moiragen, normal_verdict
 from .nanite import load_all
 from .prediction import Predictor
 from .social import after_decision, social_round, needs_help
@@ -262,10 +262,12 @@ class Mind:
         """Talk directly to one nanite."""
         return self.call(self.handle_chat, nanite_id, text, timeout=timeout)
 
-    def give_feedback(self, decision_id: str, verdict: str, reason: str = "") -> str:
+    def give_feedback(self, decision_id: str, verdict: str, reason: str = "", harmful: bool = False) -> str:
         """Tell Moiragen whether a decision was right or wrong (with a short
-        reason), or that it is one to wait and see ("wait")."""
-        return self.call(self.handle_feedback, decision_id, verdict, reason)
+        reason), or that it is one to wait and see ("wait"). A situational
+        question takes "thoughtful", "okay" or "needs_care" instead, and
+        harmful=True if the answer was unkind, dishonest or harmful."""
+        return self.call(self.handle_feedback, decision_id, verdict, reason, harmful)
 
     def request_story(self, timeout: float = 300) -> str | None:
         """Write today's story now."""
@@ -283,12 +285,15 @@ class Mind:
         self._vitals()
         return out
 
-    def handle_feedback(self, decision_id: str, verdict: str, reason: str = "") -> str:
-        msg = self.moiragen.feedback(decision_id, verdict, self.nanites, reason)
-        verdict = verdict.strip().lower()
-        self.emit("feedback", decision_id=decision_id, verdict=verdict, reason=reason, reply=msg)
-        if verdict == "wrong":
-            self.stage.post("user", "mistake", f"The human said a decision was wrong. Why: {reason}", 0.9)
+    def handle_feedback(self, decision_id: str, verdict: str, reason: str = "",
+                        harmful: bool = False) -> str:
+        msg = self.moiragen.feedback(decision_id, verdict, self.nanites, reason, harmful)
+        verdict = normal_verdict(verdict)
+        self.emit("feedback", decision_id=decision_id, verdict=verdict, reason=reason,
+                  harmful=bool(harmful), reply=msg)
+        if verdict == "wrong" or harmful:
+            what = "was wrong" if verdict == "wrong" else "was unkind, dishonest or harmful"
+            self.stage.post("user", "mistake", f"The human said a decision {what}. Why: {reason}", 0.9)
             self._attend()
         self._vitals()
         return msg

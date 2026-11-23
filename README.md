@@ -45,7 +45,7 @@ Or from a terminal in the project folder:
 
 Then open http://127.0.0.1:8765. The server only listens on this laptop. Press Ctrl+C to stop; he finishes his current thought first.
 
-**In the viewer:** click Moiragen to ask him something (the nanites suggest, he decides and tells each one why, and you can mark it Right, Wrong or Wait and see, with a short reason). Click a nanite to talk to it directly. Watch their bars, speech bubbles, the spotlight and the inner-life feed.
+**In the viewer:** click Moiragen to ask him something (the nanites suggest, he decides and tells each one why, and you can mark it Right, Wrong or Wait and see, with a short reason; a situational question gets Thoughtful, Okay or Needs more care instead). Click a nanite to talk to it directly. Watch their bars, speech bubbles, the spotlight and the inner-life feed.
 
 If you leave the app alone for 10 minutes (no question, no chat, no mouse or keyboard in the viewer), the top bar shows "Resting while you're away" and the nanites pause. Move the mouse or say something and they carry on. Social moments are also limited to about one every 2 minutes, and at most 12 an hour.
 
@@ -54,7 +54,7 @@ Terminal tools, if you prefer:
 | Command | What it does |
 |---|---|
 | `.venv\Scripts\python.exe live.py` | watch him live in the terminal and ask questions any time |
-| `.venv\Scripts\python.exe ask.py` | ask Moiragen questions, mark answers right/wrong (with a reason) or wait and see |
+| `.venv\Scripts\python.exe ask.py` | ask Moiragen questions, mark answers right/wrong (with a reason) or wait and see; situations get thoughtful/okay/needs more care |
 | `.venv\Scripts\python.exe talk.py two` | chat with one nanite (`one`, `two` or `three`) |
 | `.venv\Scripts\python.exe export.py` | export fine-tuning data (see below) |
 
@@ -91,6 +91,12 @@ The goal is for the nanites to grow into themselves, not just to please whoever 
 - **Disagreeing is allowed.** A nanite whose answer lost may say "I think you're wrong, Moiragen", or something softer like "you prioritized the calculation over the structure". Either way, Moiragen thinks it over and says why he keeps his choice or changes it. If he tells a nanite "you are correct", he must change his choice or clearly say why not. Disagreeing never costs health.
 - **Their differences are protected.** Each nanite's own way of seeing is tracked with simple word counts (`moiragen/styles.py`): One notices patterns, Two wonders about time and change, Three pays attention to feelings. Moiragen is reminded to value all three ways equally and never to ask one nanite to answer like another, call an answer "too reflective", or push everyone toward measurable data. If such words slip into what he is about to tell a nanite, they are shown back to him with a gentle note ("This dismisses a way of seeing. Can you say it more fairly?") and he rewrites them once. Only if the rewrite is still dismissive is that sentence removed. Every case is written in the inner-life journal. The style is never written into a nanite's own prompt, because that would force it.
 - **Fair turns.** Moiragen counts how often he chooses each nanite. If he chooses the same one 3 times in a row, he must tell the others why their answers were not better this time.
+- **Situations are judged by the reasoning.** A question like "What would you do if…?", "A friend breaks something you love. What do you say?" or "What now?" often has no single right answer. Plain Python recognises it (`facts.situational`), and then:
+  - Moiragen chooses the answer whose reasoning is kindest, most honest, most considerate of others' feelings and most practical.
+  - He checks every nanite's reasoning against the same four points: **kind**, **honest**, **considers others' feelings**, **practical**. All four make it **Thoughtful**; some of them make it **Okay**; unkind, dishonest (including a made-up memory or detail) or at most one of the four makes it **Needs more care**.
+  - He tells every nanite, chosen or not, what was good in its reasoning, and one thing to add if anything.
+  - Every nanite whose reasoning is Thoughtful gets a small mood boost, even if he chose another answer. A different choice never costs health or brings disappointment; only "Needs more care" brings a little.
+  - Your verdict is **Thoughtful**, **Okay** or **Needs more care** too, always with a short reason. Nobody loses health for any of these. Only if you tick **"This answer was unkind, dishonest or harmful"** is the cost shared like a wrong answer (half for Moiragen, half for the nanite he chose).
 - **Reality teaches.** When an answer depends on a real future event ("Will it rain this weekend?"), Moiragen marks it **wait and see**. An imagined situation ("A friend says…", "Imagine…") never is: there is no real result to wait for. Nobody feels chosen or left out yet. It shows under *Waiting to see* in the viewer (or `/waiting` in `ask.py`); once you know the result, mark it right or wrong with a reason, and every nanite learns from what really happened.
 
 ## Keeping their words fresh
@@ -148,7 +154,7 @@ moiragen/
   social.py      talking, helping, comforting, asking why, disagreeing, learning
   mother.py      Moiragen: deciding, judging with reasons, reconsidering, reflecting, inner voice
   styles.py      each nanite's own way of seeing (word counts, shown to Moiragen only)
-  facts.py       plain-Python checks: calculator, past claims, honesty signs, disagreement
+  facts.py       plain-Python checks: calculator, past claims, honesty signs, disagreement, situations
   journal.py     the inner-life journal, written from the life log (catches up on every start)
   body.py        body cells (clock, battery, temperature, load)
   stage.py       the global workspace

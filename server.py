@@ -17,7 +17,10 @@ Endpoints:
     POST /api/ask        {"text": "..."}                      ask Moiragen (nanites suggest, he decides)
     POST /api/chat       {"nanite_id": "nanite_one", "text"}  talk directly to one nanite
     POST /api/feedback   {"decision_id", "verdict", "reason"} verdict: "right" or "wrong" (a
-                         reason is required), or "wait" (wait and see; reason = what to check)
+                         reason is required), or "wait" (wait and see; reason = what to check).
+                         A situational question ("What would you do if...?") takes
+                         "thoughtful", "okay" or "needs_care" (with a reason), plus
+                         "harmful": true if the answer was unkind, dishonest or harmful
     POST /api/story      write today's story now
     POST /api/active     "I'm here": the viewer sends this when you move the mouse or type
                          (at most once a minute). Without any sign of you for 10 minutes,
@@ -54,8 +57,9 @@ class ChatBody(BaseModel):
 
 class FeedbackBody(BaseModel):
     decision_id: str
-    verdict: str          # "right", "wrong" or "wait"
-    reason: str = ""      # required for right/wrong: the nanites learn from it
+    verdict: str          # "right", "wrong" or "wait"; situational: "thoughtful", "okay", "needs_care"
+    reason: str = ""      # required for every verdict except wait: the nanites learn from it
+    harmful: bool = False # situational only: unkind, dishonest or harmful (the only kind that costs health)
 
 
 class Broadcaster:
@@ -139,7 +143,8 @@ def create_app(mind: Mind | None = None, start_mind: bool = True) -> FastAPI:
 
     @app.post("/api/feedback")
     async def feedback(body: FeedbackBody):
-        reply = await run_job(app.state.mind.give_feedback, body.decision_id, body.verdict, body.reason)
+        reply = await run_job(app.state.mind.give_feedback, body.decision_id, body.verdict,
+                              body.reason, body.harmful)
         return {"reply": reply}
 
     @app.post("/api/story")

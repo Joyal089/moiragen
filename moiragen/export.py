@@ -10,7 +10,9 @@ standard chat format most fine-tuning tools accept:
 
 Labels you can filter on later (for the nightly fine-tuning):
     chosen    - for a nanite's suggestion: did Moiragen pick it?
-    feedback  - "right" / "wrong" if you marked that decision, else null
+    feedback  - "right" / "wrong" if you marked that decision, else null. For a
+                situational question: "thoughtful", "okay", "needs_care", or
+                "harmful" if you marked it unkind, dishonest or harmful
 
 Replies that copy a line said shortly before them (the echo loop, see
 echo.py) are left out: the echo check is replayed over the whole log, so
@@ -39,7 +41,9 @@ def _decision_labels(events: list[dict]) -> tuple[dict, dict]:
             continue
         if e["kind"] in ("decision_full", "choice_changed"):
             chosen[did] = e.get("chosen")       # a later change of mind wins
-        if e["who"] == "Moiragen" and "correct" in e:
+        if e["who"] == "Moiragen" and "verdict" in e:      # a situational question
+            feedback[did] = "harmful" if e.get("harmful") else e["verdict"]
+        elif e["who"] == "Moiragen" and "correct" in e:
             feedback[did] = "right" if e["correct"] else "wrong"   # the last mark wins
     return chosen, feedback
 
@@ -68,7 +72,7 @@ def build_examples(since: str | None = None, skip_wrong: bool = False,
             continue
         did = e.get("decision_id")
         fb = feedback.get(did)
-        if skip_wrong and fb == "wrong":
+        if skip_wrong and fb in ("wrong", "harmful"):
             continue
         messages = [{"role": "system", "content": e["system"]}] + e["messages"] + \
                    [{"role": "assistant", "content": e["reply"]}]

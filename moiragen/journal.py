@@ -90,14 +90,16 @@ def render(e: dict) -> str | None:
 
 def _render_decision(e: dict, at: str) -> str:
     """A question: each nanite's answer, Moiragen's note to it, his choice and answer."""
-    lines = [f"\n### {at} Question: \"{clean(e.get('question'))}\"\n"]
+    situation = " (a situation: judged by the reasoning)" if e.get("situational") else ""
+    lines = [f"\n### {at} Question: \"{clean(e.get('question'))}\"{situation}\n"]
     for s in e.get("suggestions", []):
         v = (e.get("verdicts") or {}).get(s["nanite"], {})
         star = " (chosen)" if s["nanite"] == e.get("chosen") else ""
         lines.append(f"- **{s['nanite']}**{star}: {clean(s['text'])}")
         if v.get("why"):
             valued = f" _(+ {', '.join(v['rewards'])})_" if v.get("rewards") else ""
-            lines.append(f"  - Moiragen to {s['nanite']}: {clean(v['why'])}{valued}")
+            label = f"**{v['label']}**: " if v.get("label") else ""
+            lines.append(f"  - Moiragen to {s['nanite']}: {label}{clean(v['why'])}{valued}")
     if e.get("compare"):
         lines.append(f"- Moiragen compared: {clean(e['compare'])}")
     calc = (e.get("checks") or {}).get("calculator")

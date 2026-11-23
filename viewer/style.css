@@ -157,6 +157,10 @@ input:focus, button:focus-visible { outline: 2px solid var(--accent); outline-of
   border-radius: 999px; padding: 0 8px; margin: 4px 4px 0 0;
 }
 .badge.wait { border-color: var(--energy); color: var(--energy); }
+/* Situational verdicts on a nanite's reasoning */
+.badge.label-thoughtful { border-color: var(--health); color: var(--health); }
+.badge.label-okay { border-color: var(--mood); color: var(--mood); }
+.badge.label-needs_care { border-color: var(--support); color: var(--support); }
 .changed { border-left: 3px solid var(--support); padding: 6px 10px; margin: 8px 0; font-size: 13px; }
 .wait-item { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; background: var(--bg); }
 .wait-item .q { font-weight: 600; }

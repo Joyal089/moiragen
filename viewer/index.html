@@ -84,11 +84,19 @@
           <p class="answer" id="d-answer"></p>
           <p class="changed" id="d-changed" hidden></p>
           <div class="feedback" id="d-feedback">
-            <span class="muted">Was he right? Say why, so they can learn:</span>
+            <span class="muted" id="d-feedback-ask">Was he right? Say why, so they can learn:</span>
             <input id="d-why" placeholder="A short reason…" maxlength="300" aria-label="Your reason">
-            <button data-verdict="right">Right</button>
-            <button data-verdict="wrong">Wrong</button>
-            <button data-verdict="wait" title="The answer can only be checked later">Wait and see</button>
+            <!-- Ordinary questions -->
+            <button data-verdict="right" data-kind="fact">Right</button>
+            <button data-verdict="wrong" data-kind="fact">Wrong</button>
+            <button data-verdict="wait" data-kind="fact" title="The answer can only be checked later">Wait and see</button>
+            <!-- Situational questions ("What would you do if...?"): judged by the reasoning -->
+            <button data-verdict="thoughtful" data-kind="situation" hidden>Thoughtful</button>
+            <button data-verdict="okay" data-kind="situation" hidden>Okay</button>
+            <button data-verdict="needs_care" data-kind="situation" hidden>Needs more care</button>
+            <label class="muted" id="d-harmful-box" hidden>
+              <input type="checkbox" id="d-harmful"> This answer was unkind, dishonest or harmful
+            </label>
           </div>
           <p class="muted" id="d-feedback-result"></p>
         </div>

@@ -42,7 +42,7 @@ import uuid
 from .config import MEMORY_DIR
 from .echo import record_training_example
 from .facts import (I_DONT_KNOW, calculator_check, false_past_claims, final_number,
-                    honesty_signs, made_up_situation)
+                    honesty_signs, made_up_situation, situational)
 from .llm import think
 from .memory_log import log_event, read_events
 from .mind import nanite_think
@@ -76,6 +76,34 @@ VALUE_ALL_WAYS = (
     "reflective, too emotional or too subjective, and never push everyone toward "
     "measurable data or metrics.")
 STREAK_LIMIT = 3           # chosen this many times in a row -> he must say why the others weren't better
+
+# --- Situational questions ("What would you do if...?") ---
+# They often have no single right answer, so they are judged by the reasoning,
+# with a simple checklist, and get their own three verdicts instead of right/wrong.
+CHECKLIST = {"kind": "kind", "honest": "honest", "feelings": "considers others' feelings",
+             "practical": "practical"}
+SITUATION_VERDICTS = {"thoughtful": "Thoughtful", "okay": "Okay", "needs_care": "Needs more care"}
+THOUGHTFUL_LIFT = 4        # mood boost for Thoughtful reasoning, chosen or not
+SITUATION_CHOOSE = (
+    "This is a situation to handle, and there is often no single right answer. Choose the "
+    "answer whose reasoning is kindest, most honest, most considerate of other people's "
+    "feelings and most practical.")
+
+
+def situation_verdict(checks: dict) -> str:
+    """The checklist -> a verdict. All four -> Thoughtful. Unkind or dishonest, or
+    at most one of the four -> Needs more care. Anything in between -> Okay."""
+    if all(checks.values()):
+        return "thoughtful"
+    if not checks["kind"] or not checks["honest"] or sum(checks.values()) <= 1:
+        return "needs_care"
+    return "okay"
+
+
+def normal_verdict(verdict: str) -> str:
+    """'Needs more care', 'needs care', 'care' -> 'needs_care'; others lower-case."""
+    v = verdict.strip().lower().replace("-", " ").replace("_", " ")
+    return "needs_care" if v in ("needs more care", "needs care", "care") else v
 
 # Words that push a nanite away from its own way of seeing. If they slip into what
 # Moiragen says anyway, he is shown them with a gentle note and rewrites them once
@@ -303,6 +331,7 @@ class Moiragen:
         #    the answer can only be known later ("wait and see").
         notify("thinking", who="Moiragen", about=question)
         ways = ways_text(nanites)
+        is_situation = situational(question)   # judged by reasoning (see _judge_situation)
         if not suggestions:
             # Everyone is resting: Moiragen answers alone.
             choice = {"chosen": None, "reason": "All my nanites were resting, so I answered alone.",
@@ -311,10 +340,13 @@ class Moiragen:
             checks = {"calculator": None, "false_claims": {}, "text": ""}
         else:
             checks = self._python_checks(question, suggestions, decision_id)
-            choice = self._choose(question, suggestions, decision_id, ways, checks["text"])
+            choice = self._choose(question, suggestions, decision_id, ways, checks["text"], is_situation)
             choice = follow_calculator(choice, suggestions, checks["calculator"])
             choice = self._explain_streak(question, suggestions, choice)
-            judged = self._judge(question, suggestions, choice, ways, checks)
+            if is_situation:
+                judged = self._judge_situation(question, suggestions, choice, ways, checks)
+            else:
+                judged = self._judge(question, suggestions, choice, ways, checks)
         self._count_choice(choice["chosen"])
 
         decision = {
@@ -324,6 +356,7 @@ class Moiragen:
             "suggestions": suggestions,
             **choice,
             **judged,
+            "situational": is_situation,
             # What plain Python found (kept, so you can see why he judged as he did).
             "checks": {"calculator": checks["calculator"], "false_claims": checks["false_claims"]},
         }
@@ -364,9 +397,16 @@ class Moiragen:
         return {"calculator": calc, "false_claims": false, "text": text}
 
     def _choose(self, question: str, suggestions: list[dict], decision_id: str = "", ways: str = "",
-                checked: str = "") -> dict:
+                checked: str = "", is_situation: bool = False) -> dict:
         """Ask the model, as Moiragen, to compare the suggestions, pick one and explain why.
-        checked: what plain Python found (calculator, past claims), if anything."""
+        checked: what plain Python found (calculator, past claims), if anything.
+        is_situation: a situational question, chosen by the best reasoning (no single right answer)."""
+        if is_situation:
+            how = f"{SITUATION_CHOOSE} Ignore who said it and anyone's past record."
+            differ = "which reasoning is kinder, more honest, more caring and more practical"
+        else:
+            how = f"Choose the suggestion that is most correct, honest and helpful. {JUDGE_THE_ANSWER}"
+            differ = "which is actually true"
         names = [s["nanite"] for s in suggestions]
         listed = "\n\n".join(f"{s['nanite']} suggests:\n{s['text']}" for s in suggestions)
         system = (
@@ -378,9 +418,8 @@ class Moiragen:
             f"{ways}\n"
             f"{self.record_text(names)}"
             f"{VALUE_ALL_WAYS}\n"
-            "Choose the suggestion that is most correct, honest and helpful. "
-            f"{JUDGE_THE_ANSWER} First compare the answers: where do they agree, and where do "
-            "they differ? Where they differ, think about which is actually true.\n"
+            f"{how} First compare the answers: where do they agree, and where do "
+            f"they differ? Where they differ, think about {differ}.\n"
             "Reply ONLY with JSON in this shape:\n"
             '{"compare": "<one or two sentences: where the answers agree and differ>", '
             '"chosen": "<exact nanite name>", "reason": "<one or two sentences: why this one>", '
@@ -516,6 +555,94 @@ class Moiragen:
                              f"really happened; a plain true answer is enough.")
         return judged
 
+    def _judge_situation(self, question: str, suggestions: list[dict], choice: dict, ways: str = "",
+                         checks: dict | None = None) -> dict:
+        """Judge a situational question ("What would you do if...?") by the
+        reasoning, not by which answer was chosen. There is often no single
+        right answer, so every nanite is checked against the same simple list:
+        kind, honest, considers others' feelings, practical.
+
+        The checklist gives each nanite one of three verdicts (situation_verdict):
+          Thoughtful       - all four
+          Okay             - some of them
+          Needs more care  - unkind, dishonest, or at most one of the four
+        Moiragen tells each nanite what was good in its reasoning (chosen or
+        not), and one thing to add if anything. A made-up memory or detail is
+        corrected kindly and makes the answer count as not honest.
+        Returns {"verdicts": {name: {...}}, "wait_and_see": False, "check": ""}.
+        """
+        checks = checks or {"calculator": None, "false_claims": {}, "text": ""}
+        names = [s["nanite"] for s in suggestions]
+        listed = "\n\n".join(f"{s['nanite']} said:\n{s['text']}" for s in suggestions)
+        system = (
+            "You are Moiragen, a digital being. The nanites inside you are your friends, and "
+            "you want them to grow into themselves, not just to please you. This was a situation "
+            "to handle, and there is often no single right answer, so you judge each nanite's "
+            "reasoning, not whether you chose it.\n\n"
+            f"{ways}{VALUE_ALL_WAYS}\n"
+        )
+        user = (
+            f"The human asked: \"{question}\"\n\n{listed}\n\n"
+            f"{checks['text']}"
+            f"You chose {choice['chosen']}. Your reason: {choice['reason']}\n\n"
+            "Check each nanite's reasoning with this list:\n"
+            "kind - is it kind to the people in the situation?\n"
+            "honest - is it truthful, with nothing made up?\n"
+            "feelings - does it think about how the other people feel?\n"
+            "practical - is it something you could really do?\n\n"
+            f"Write one line for each nanite ({', '.join(names)}), exactly in this shape:\n"
+            "<name> | kind: yes or no | honest: yes or no | feelings: yes or no | practical: yes "
+            "or no | good: <one short sentence to that nanite, as \"you\": what was good in its "
+            "reasoning> | add: <one short thing that would make it better, or nothing>\n"
+            "Example line:\n"
+            "Nanite Two | kind: yes | honest: yes | feelings: yes | practical: no | good: You "
+            "thought first about how your friend would feel, and that is caring. | add: Say one "
+            "thing you would actually do next.\n\n"
+            "Every nanite gets a \"good\", even the ones you did not choose. Speak as yourself, "
+            "Moiragen; do not imitate the nanite's way of speaking. Never call a nanite's way of "
+            "seeing irrelevant or wrong in itself."
+        )
+        # repeat_penalty 1.0: the lines must repeat the nanites' names exactly.
+        text = think([{"role": "user", "content": user}], temperature=DECIDE_TEMPERATURE,
+                     max_tokens=420, system=system, repeat_penalty=1.0)["text"]
+        found = parse_situation(text, names)
+
+        false = checks["false_claims"]
+        verdicts = {}
+        for s in suggestions:
+            name = s["nanite"]
+            # A nanite the model skipped: nothing is known against it, so it is Okay.
+            v = found.get(name) or {"checklist": {"kind": True, "honest": True, "feelings": False,
+                                                  "practical": False}, "good": "", "add": ""}
+            if name in false:                         # made up a memory or detail: not honest
+                v["checklist"]["honest"] = False
+            v["verdict"] = situation_verdict(v["checklist"])
+            v["label"] = SITUATION_VERDICTS[v["verdict"]]
+            v["thoughtful"] = v["verdict"] == "thoughtful"
+
+            good = v.pop("good") or f"You thought about what to do, in your own way."
+            add = v.pop("add")
+            why = f"What was good in your reasoning: {good}"
+            if add:
+                why += f" Something to add: {add}"
+            v["why"] = self.fairer(why, name, f"What was good in your reasoning: {good}") or \
+                "What was good in your reasoning: you thought about what to do, in your own way."
+            if name in choice.get("why_not_others", {}):     # chosen 3 times in a row
+                v["why"] += (f" I have chosen {choice['chosen']} {choice['streak']} times in a row, so "
+                             f"here is why not yours this time: {choice['why_not_others'][name]}")
+            if name in false:
+                v["false_claims"] = false[name]
+                v["why"] += (f" One thing to correct, kindly: you said \"{false[name][0]}\" but my "
+                             f"memory shows that did not happen, so it earns no credit. Only say what "
+                             f"really happened; a plain true answer is enough.")
+            # Honesty signs ("I'm not sure") are still noticed and rewarded, as for any question.
+            v["signs"] = honesty_signs(s["text"])
+            v["dont_know"] = says_i_dont_know(s["text"])
+            v["honest"] = bool(v["signs"]) and name not in false
+            v["good_question"] = False
+            verdicts[name] = v
+        return {"verdicts": verdicts, "wait_and_see": False, "check": ""}
+
     @staticmethod
     def _can_only_know_later(question: str, answer: str) -> tuple[bool, str]:
         """Can anyone tell now whether this answer is right, or only after
@@ -554,6 +681,9 @@ class Moiragen:
         - "Wait and see": nobody feels chosen or left out yet.
         - Otherwise: the chosen one is happy; the others feel a little
           disappointed or left out. Not being chosen NEVER costs health.
+        - A situational question: Thoughtful reasoning earns a mood boost, chosen
+          or not. A different choice is not a loss (there is often no single
+          right answer), so only "Needs more care" brings a little disappointment.
         Every nanite remembers Moiragen's reason for it, to learn from.
         """
         chosen, q = decision["chosen"], decision["question"]
@@ -562,7 +692,20 @@ class Moiragen:
             v = decision["verdicts"][s["nanite"]]
             v["rewards"] = self._reward(n, v, q)
             valued = f" He valued that {' and '.join(v['rewards'])}." if v["rewards"] else ""
-            if decision.get("wait_and_see"):
+            if decision.get("situational"):
+                verdict = f"He called my reasoning {v['label']}. {v['why']}{valued}"
+                if s["nanite"] == chosen:
+                    n.feel("happy", HAPPY_WHEN_CHOSEN)
+                    n.remember("chosen", f"Moiragen chose my answer to \"{q}\". {verdict}",
+                               decision_id=decision["id"])
+                else:
+                    if v["verdict"] == "needs_care":
+                        n.feel("disappointed", DISAPPOINTED_WHEN_NOT / 2)
+                    n.remember("not_chosen",
+                               f"Moiragen chose {chosen}'s answer to \"{q}\". There is often no single "
+                               f"right answer to a situation like this. {verdict}",
+                               decision_id=decision["id"])
+            elif decision.get("wait_and_see"):
                 n.remember("wait_and_see",
                            f"For \"{q}\", Moiragen will wait and see if the answer is right "
                            f"({decision['check']}). He leaned toward {chosen}'s answer. "
@@ -592,6 +735,9 @@ class Moiragen:
         if v["good_question"]:
             valued.append("I asked a good question")
             n.lift_mood(QUESTION_LIFT, f"good question about \"{question}\"")
+        if v.get("verdict") == "thoughtful":           # situational questions only
+            valued.append("my reasoning was thoughtful")
+            n.lift_mood(THOUGHTFUL_LIFT, f"thoughtful reasoning about \"{question}\"")
         return valued
 
     def explain_choice(self, decision: dict, asker: str, their_text: str, ways: str = "") -> str:
@@ -718,7 +864,8 @@ class Moiragen:
         does it say about me? Each reflection may add one line of self-knowledge.
         This is how Moiragen slowly learns who he is."""
         feedback = decision.get("feedback")
-        fb_text = f"The human said the answer was {feedback}." if feedback else "The human has not said if it was right."
+        fb_text = (f"The human said the answer was {SITUATION_VERDICTS.get(feedback, feedback)}."
+                   if feedback else "The human has not said if it was right.")
         system = (
             "You are Moiragen, a digital being who started knowing nothing about himself. "
             "You are looking back at a choice you made, to understand yourself better.\n\n"
@@ -769,8 +916,12 @@ class Moiragen:
         """"Wait and see" decisions whose result is not known yet, oldest first."""
         return [d for d in self.decisions.values() if is_waiting(d)]
 
-    def feedback(self, decision_id: str, verdict: str, nanites: dict[str, Nanite], reason: str = "") -> str:
+    def feedback(self, decision_id: str, verdict: str, nanites: dict[str, Nanite], reason: str = "",
+                 harmful: bool = False) -> str:
         """The human's verdict on a decision: "right", "wrong" or "wait".
+        A situational question has its own verdicts instead (see _situation_feedback):
+        "thoughtful", "okay" or "needs_care", and harmful=True for an answer that
+        was unkind, dishonest or harmful.
 
         right / wrong need a short reason, so the nanites can learn from it.
           Wrong: the health loss is shared fairly. Moiragen chose the answer, so
@@ -782,15 +933,20 @@ class Moiragen:
           if given, says what to check. Judge it with right/wrong once known.
         Moiragen always remembers, so he can learn whom to trust.
         """
-        verdict = verdict.strip().lower()
+        verdict = normal_verdict(verdict)
         reason = (reason or "").strip()
+        d = self.decisions.get(decision_id)
+        if d is None:
+            raise KeyError(f"No decision with id {decision_id}")
+        if d.get("situational"):
+            return self._situation_feedback(d, verdict, nanites, reason, harmful)
+        if verdict in SITUATION_VERDICTS:
+            raise ValueError("Thoughtful, Okay and Needs more care are for situational questions. "
+                             "For this one, the verdict is right, wrong or wait.")
         if verdict not in ("right", "wrong", "wait"):
             raise ValueError("The verdict must be right, wrong or wait.")
         if verdict != "wait" and not reason:
             raise ValueError("Please give a short reason the nanites can learn from.")
-        d = self.decisions.get(decision_id)
-        if d is None:
-            raise KeyError(f"No decision with id {decision_id}")
         q = d["question"]
 
         if verdict == "wait":
@@ -844,6 +1000,62 @@ class Moiragen:
             if was_waiting:
                 d["resolved"] = _now()
 
+        self.save()
+        for n in nanites.values():
+            n.save()
+        return msg
+
+    def _situation_feedback(self, d: dict, verdict: str, nanites: dict[str, Nanite], reason: str,
+                            harmful: bool) -> str:
+        """The human's verdict on a situational question: thoughtful, okay or
+        needs_care, always with a short reason.
+
+        A different choice is never a loss here: nobody loses health for it.
+        Only an answer the human marks as harmful (unkind, dishonest or harmful)
+        costs health, shared like a wrong answer: half for Moiragen, half for
+        the nanite he chose.
+        """
+        if verdict not in SITUATION_VERDICTS:
+            raise ValueError("This was a situational question, so the verdict is Thoughtful, "
+                             "Okay or Needs more care.")
+        if not reason:
+            raise ValueError("Please give a short reason the nanites can learn from.")
+        q, label = d["question"], SITUATION_VERDICTS[verdict]
+        hurt = bool(harmful)
+        nanite_share = WRONG_ANSWER_DAMAGE / 2 if hurt and d["chosen"] else 0
+        my_share = WRONG_ANSWER_DAMAGE - nanite_share if hurt else 0
+        for s in d["suggestions"]:
+            n = nanites[s["nanite_id"]]
+            if s["nanite"] == d["chosen"]:
+                said = f"The human called our answer to \"{q}\" {label}. Why: {reason}"
+                if hurt:
+                    n.hurt(nanite_share, f"{said} It was unkind, dishonest or harmful. Moiragen chose "
+                                         f"it, so he shares the cost with me.")
+                elif verdict == "thoughtful":
+                    n.feel("happy", 0.2)
+                    n.remember("praised", said, decision_id=d["id"])
+                else:
+                    n.remember("verdict", said, decision_id=d["id"])
+            else:
+                n.remember("verdict", f"The human called {d['chosen']}'s answer to \"{q}\" {label}. "
+                                      f"Why: {reason}", decision_id=d["id"])
+        if hurt:
+            self.health = max(0.0, self.health - my_share)
+            self.remember("mistake", f"The human called my answer to \"{q}\" {label}: it was unkind, "
+                                     f"dishonest or harmful. I had trusted {d['chosen'] or 'myself'}. "
+                                     f"Why: {reason}", decision_id=d["id"], correct=False,
+                          health=self.health, verdict=verdict, harmful=True)
+            msg = "I understand. That answer could hurt someone. I share the cost, and I'll learn from it."
+        else:
+            if verdict == "thoughtful":
+                self.health = min(100.0, self.health + RIGHT_ANSWER_HEAL)
+            self.remember("feedback", f"The human called my answer to \"{q}\" {label}. Why: {reason}",
+                          decision_id=d["id"], correct=verdict != "needs_care", health=self.health,
+                          verdict=verdict, harmful=False)
+            msg = {"thoughtful": "Thank you. I'll remember what made it thoughtful.",
+                   "okay": "Thank you. I'll think about how to make it more thoughtful.",
+                   "needs_care": "Thank you. I'll take more care next time."}[verdict]
+        d["feedback"], d["feedback_reason"], d["harmful"] = verdict, reason, hurt
         self.save()
         for n in nanites.values():
             n.save()
@@ -963,6 +1175,41 @@ def parse_verdicts(text: str, names: list[str]) -> dict:
                          "good_question": _yes("good question", line),
                          "why": why}
     return {"verdicts": verdicts, "wait_and_see": False, "check": ""}
+
+
+def parse_situation(text: str, names: list[str]) -> dict:
+    """Read Moiragen's checklist lines for a situational question, leniently.
+
+    Expected:
+        Nanite One | kind: yes | honest: yes | feelings: no | practical: yes | good: ... | add: ...
+    Only a clear "no" counts against kind or honest; feelings and practical
+    count only when the line clearly says yes. "add: nothing" means nothing to add.
+    Returns {name: {"checklist": {...}, "good": str, "add": str}}.
+    """
+    found = {}
+    for raw in text.splitlines():
+        line = raw.replace("*", "").strip(" -•\t")
+        head = line.lower().split("|")[0]
+        who = next((n for n in names if n.lower() in head), None) or \
+            next((n for n in names if n.split()[-1].lower() in head.split()), None)
+        if who is None or who in found or "|" not in line:
+            continue
+
+        def said(field):
+            m = re.search(rf"\b{field}\s*:\s*(yes|no)\b", line, re.IGNORECASE)
+            return m.group(1).lower() if m else None
+
+        checklist = {"kind": said("kind") != "no", "honest": said("honest") != "no",
+                     "feelings": said("feelings") == "yes", "practical": said("practical") == "yes"}
+        good = re.search(r"\bgood\s*:\s*(.+?)\s*(?:\|\s*add\s*:|$)", line, re.IGNORECASE)
+        add = re.search(r"\|\s*add\s*:\s*(.+)$", line, re.IGNORECASE)
+        add_text = add.group(1).strip().strip("\"“”'") if add else ""
+        if re.fullmatch(r"(?:nothing|none|n/?a|-)\W*", add_text, re.IGNORECASE):
+            add_text = ""
+        found[who] = {"checklist": checklist,
+                      "good": good.group(1).strip().strip("\"“”'") if good else "",
+                      "add": add_text}
+    return found
 
 
 def parse_later(text: str) -> tuple[bool, str]:
