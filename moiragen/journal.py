@@ -80,6 +80,8 @@ def render(e: dict) -> str | None:
         if e.get("made_up"):
             notes.append("the made-up memory check would flag " + "; ".join(f"\"{clean(c)}\"" for c in e["made_up"]))
         return f"- {at} _(only noted, {who}'s words are unchanged: {' and '.join(notes)})_"
+    if k == "story_note":                            # v2.6: a story told as if it were real
+        return f"- {at} **Gentle note ({who}):** {clean(e.get('text'))}"
     if k == "memory_note":                           # v2.4: a label or a restored line in his memory
         return f"- {at} **Memory note ({who}):** {clean(e.get('note'))}"
     if k == "story_talk" and e.get("quiet"):

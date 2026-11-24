@@ -13,7 +13,7 @@ import os
 
 from .blueprint import get_blueprint, random_temperament
 from .config import MEMORY_DIR
-from .memory_log import log_event, read_events
+from .memory_log import log_event, noted_changes, read_events
 from .styles import starting_style
 
 NANITE_DIR = MEMORY_DIR / "nanites"
@@ -258,8 +258,10 @@ class Nanite:
         if births:
             n.temperament = births[0]["temperament"]
         recovered = [e for e in read_events(who=name, last=2000) if "text" in e]
+        notes = noted_changes(name)      # labels added to a memory later (v2.6)
         n.memories = [
-            {"time": e["time"], "kind": e["kind"], "text": e["text"]} for e in recovered
+            {"time": e["time"], "kind": e["kind"], "text": notes.get((e["time"], e["text"]), e["text"])}
+            for e in recovered
         ][-bp["memory_keep"]:]
         n.lessons = [
             {"time": e["time"], "lesson": e["text"], "source": e.get("source", "")}

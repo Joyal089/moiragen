@@ -95,7 +95,8 @@ def corrected_words(events: list[dict]) -> tuple[list[str], set]:
 # ---------------- 3. pretend play ----------------
 
 def pretend_stories(events: list[dict]) -> dict[str, dict]:
-    """Every story labelled as pretend play: {title: {"since": time, "names": [...]}}.
+    """Every story labelled as pretend play: {title: {"since": time, "names": [...],
+    "words": the whole story, "new_words": those nobody had used before it}}.
 
     The names are the new names in the narrator's words ("Lumi", "Rosa"): words with a capital
     letter in the middle of a sentence, never written before the story began, and never
@@ -117,13 +118,21 @@ def pretend_stories(events: list[dict]) -> dict[str, dict]:
     stories = {}
     for title in titles:
         its_events = [e for e in events if base_title(str(e.get("title") or e.get("story") or "")) == title]
+        its_events = [e for e in its_events if e["kind"] in ("path_story", "story_time", "story_talk")]
+        if not its_events:
+            continue
         since = min(e["time"] for e in its_events)
+        # What the narrator told (names come from here), and every word of the story.
         told = " ".join(e["text"].split("||")[0] for e in its_events
-                        if e["kind"] == "path_story" and str(e.get("text")).startswith("Narrator:"))
-        names = set(re.findall(r"(?<=[a-z,;] )[A-Z][a-z]{2,}\b", told))
+                        if str(e.get("text")).startswith("Narrator:") and e["kind"] == "path_story"
+                        or e["kind"] == "story_time" and e["who"] == "mind")
+        whole = " ".join(str(e.get("text") or "") for e in its_events)
+        names = set(re.findall(r"(?:(?<=[a-z,;] )|(?<=Mr\. )|(?<=Ms\. )|(?<=Mrs\. ))[A-Z][a-z]{2,}\b", told))
         old = " ".join(str(e.get("reply") or e.get("text") or "") for e in events if e["time"] < since)
         known = set(re.findall(r"\w+", old)) | ORDINARY
-        stories[title] = {"since": since,
+        stories[title] = {"since": since, "words": whole,
+                          "new_words": set(re.findall(r"[a-z]+", whole.lower()))
+                          - set(re.findall(r"[a-z]+", old.lower())),
                           "names": sorted(n for n in names if n not in known and n.lower() not in small)}
     return stories
 
@@ -133,6 +142,8 @@ def labelled_words(events: list[dict]) -> list[str]:
     time: I said: ..." also just what was said)."""
     old = [plain(c["old"]) for e in events if e["kind"] == "memory_note" for c in e.get("changes") or []
            if LABEL.match(c.get("new") or "") and c.get("old")]
+    # ... and what a mind told as if a story were real (it got a gentle note, see real_or_story.py).
+    old += [plain(e["said"]) for e in events if e["kind"] == "story_note" and e.get("said")]
     return old + [w.split("i said: ", 1)[1] for w in old if len(w.split("i said: ", 1)[-1]) > 30 and "i said: " in w]
 
 

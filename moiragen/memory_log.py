@@ -69,3 +69,10 @@ def read_events(kind: str | None = None, who: str | None = None, last: int = 50)
                 continue
             events.append(e)
     return events[-last:]
+
+
+def noted_changes(who: str) -> dict:
+    """{(time, old text): new text}: labels and restored lines added to this mind's memories
+    later ("memory_note" events), so a mind rebuilt from the life log keeps them (v2.4)."""
+    return {(c["time"], c["old"]): c["new"] for e in read_events(kind="memory_note", who=who, last=10**6)
+            for c in e.get("changes", [])}

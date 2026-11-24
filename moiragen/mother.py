@@ -50,10 +50,14 @@ from .echo import words as plain_words
 from .facts import (I_DONT_KNOW, about_wish_or_feeling, calculator_check, false_past_claims,
                     final_number, honesty_signs, made_up_situation, situational)
 from .llm import think
-from .memory_log import log_event, read_events
+from .memory_log import log_event, noted_changes, read_events
 from .mind import FEELINGS_ARE_FINE, nanite_think
 from .nanite import Nanite
+from .real_or_story import add_note
 from .styles import update_style, ways_text
+
+# Memories that hold his own words about something (see real_or_story.py).
+OWN_THOUGHTS = {"inner", "reflection", "explained", "reconsidered", "pattern", "learned_from"}
 
 MOIRAGEN_FILE = MEMORY_DIR / "moiragen.json"
 
@@ -518,6 +522,9 @@ class Moiragen:
         self.memories.append({"time": _now(), "kind": kind, "text": text, **details})
         self.memories = self.memories[-MEMORY_KEEP:]
         log_event(kind, self.name, text=text, **details)
+        if kind in OWN_THOUGHTS:         # v2.6: a story told as if it were real gets a gentle note
+            own = text.split("What was new to me: ")[-1].split("I said: ")[-1]
+            add_note(self, own, str(details.get("about") or ""))
 
     def recent_memories_text(self, how_many: int = 8) -> str:
         if not self.memories:
@@ -676,9 +683,7 @@ class Moiragen:
         MOIRAGEN_FILE.rename(MOIRAGEN_FILE.with_name(f"moiragen.broken-{stamp}.json"))
         m = cls()
         # v2.4: labels and restored lines added to a memory later are kept in the rebuild too.
-        # (Keyed by time as well, so the same words said at another time are left alone.)
-        notes = {(c["time"], c["old"]): c["new"] for e in read_events(kind="memory_note", who="Moiragen", last=5000)
-                 for c in e.get("changes", [])}
+        notes = noted_changes("Moiragen")
         for e in read_events(who="Moiragen", last=5000):
             if e["kind"] == "reflection" and e.get("about_me"):
                 m.self_knowledge.append({"time": e["time"], "text": e["about_me"], "from": e.get("decision_id", "")})

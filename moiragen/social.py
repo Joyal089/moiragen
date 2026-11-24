@@ -19,6 +19,7 @@ from . import facts
 from .echo import split_sentences
 from .memory_log import log_event
 from .mind import nanite_think, TIRED
+from .real_or_story import add_note
 from .nanite import Nanite
 from .topics import Topic, picker
 
@@ -109,6 +110,7 @@ def talk(speaker: Nanite, listener: Nanite, topic: Topic | None = None, rng=rand
     else:
         events.append(_event("talk", **{"from": listener.name, "to": speaker.name, "text": reply["reply"]}))
         speaker.remember("chat", f"I told {listener.name}: {opening['reply']} | They replied: {reply['reply']}")
+    add_note(speaker, opening["reply"])   # a story told as if it were real gets a gentle note (v2.6)
     speaker.change_friendship(listener.id, FRIENDSHIP_TALK)
     listener.change_friendship(speaker.id, FRIENDSHIP_TALK)
     return events
@@ -152,6 +154,7 @@ def support_friend(supporter: Nanite, friend: Nanite, rng=random) -> list[dict]:
     supporter.change_friendship(friend.id, FRIENDSHIP_SUPPORT / 2)
     answer = "They did not answer." if _silent(thanks) else f"They replied: {thanks['reply']}"
     supporter.remember("chat", f"I comforted {friend.name}, who seemed {feeling}: {words['reply']} | {answer}")
+    add_note(supporter, words["reply"])
     events = [_event("support", **{"from": supporter.name, "to": friend.name, "text": words["reply"]})]
     if not _silent(thanks):
         events.append(_event("talk", **{"from": friend.name, "to": supporter.name, "text": thanks["reply"]}))

@@ -14,6 +14,7 @@ from .echo import NANITES, guard, record_training_example
 from .llm import think
 from .memory_log import log_event
 from .nanite import Nanite
+from .real_or_story import add_note
 
 # --- Energy rules (easy to tune) ---
 THINK_BASE_COST = 5        # every thought costs at least this much energy
@@ -197,6 +198,7 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
             else:
                 n.remember("chat", f"{from_who} said: {message} | I replied: {reply}",
                            from_who=from_who)
+            add_note(n, reply, message)      # v2.6: a story told as if it were real gets a gentle note
         record_training_example(n.name, system, messages, reply, NANITES, decision_id,
                                 temperature=temperature,
                                 **({"decision_id": decision_id, "task": task} if decision_id else {}))
