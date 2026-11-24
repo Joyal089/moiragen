@@ -296,9 +296,9 @@ class Mind:
         """Share a story and let everyone talk about it freely (v2.1, storytime.py)."""
         return self.call(self.handle_story_time, title, story, timeout=timeout)
 
-    def moiragen_story_talk(self, title: str, prompt: str, timeout: float = 600) -> dict:
+    def moiragen_story_talk(self, title: str, prompt: str, narration: str = "", timeout: float = 600) -> dict:
         """Moiragen speaks freely about a story (v2.2): no verdicts, echo guard on."""
-        return self.call(self.handle_moiragen_story_talk, title, prompt, timeout=timeout)
+        return self.call(self.handle_moiragen_story_talk, title, prompt, narration, timeout=timeout)
 
     # The jobs themselves (always run in the mind's thread):
     def handle_chat(self, nanite_id: str, text: str) -> dict:
@@ -339,7 +339,9 @@ class Mind:
         self._vitals()
         return out
 
-    def handle_moiragen_story_talk(self, title: str, prompt: str) -> dict:
+    def handle_moiragen_story_talk(self, title: str, prompt: str, narration: str = "") -> dict:
+        if narration:                 # what the narrator says, so it can be read live in the viewer
+            self.emit("story_time", title=title, text=narration)
         self.emit("thinking", who="Moiragen", about=f"story: {title}")
         text = moiragen_says(self.moiragen, title, prompt, sentences=8, max_tokens=420)
         self.emit("story_talk", who="Moiragen", round=3, text=text, story=title)

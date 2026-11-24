@@ -172,5 +172,17 @@ assert said == "I liked Nanite One's honesty.", said
 assert list(read_events(kind="story_verdict", last=1))[0]["outcome"] == "removed"
 print("[ok] If his rewrite still judges, only the judging sentence is taken out")
 
+# ---------------- 7. The narrator's words are shown live in the viewer ----------------
+from types import SimpleNamespace
+from moiragen import loop as loop_mod
+shown = []
+fake = SimpleNamespace(moiragen=m, _vitals=lambda: None, emit=lambda kind, **d: shown.append((kind, d)))
+with patch.object(loop_mod, "moiragen_says", lambda *a, **k: "I put my work down and look."):
+    loop_mod.Mind.handle_moiragen_story_talk(fake, "A rainy day", "the long prompt", "Rain taps on the window.")
+    loop_mod.Mind.handle_moiragen_story_talk(fake, "A rainy day", "the long prompt")
+assert [k for k, _ in shown] == ["story_time", "thinking", "story_talk", "thinking", "story_talk"]
+assert shown[0][1] == {"title": "A rainy day", "text": "Rain taps on the window."}
+print("[ok] The narrator's words go to the viewer before his answer (and nothing extra when there are none)")
+
 print("\nStep 22 passed: story time is free talk with the echo guard on, no verdicts, no health changes, "
       "and it stops when anyone gets tired.")
