@@ -73,6 +73,15 @@ def render(e: dict) -> str | None:
                      f"\"{clean(e.get('final'))}\"")
         return (f"- {at} **No verdicts in story time:** Moiragen was about to say \"{clean(e.get('original'))}\". "
                 f"Gentle note on \"{e.get('phrase')}\": story time has no right or wrong. Then {done}")
+    if k == "story_flag":                            # v2.4: only a note; the words stay as they were said
+        notes = []
+        if e.get("fairness"):
+            notes.append(f"the fairness check would flag \"{e['fairness']}\"")
+        if e.get("made_up"):
+            notes.append("the made-up memory check would flag " + "; ".join(f"\"{clean(c)}\"" for c in e["made_up"]))
+        return f"- {at} _(only noted, {who}'s words are unchanged: {' and '.join(notes)})_"
+    if k == "memory_note":                           # v2.4: a label or a restored line in his memory
+        return f"- {at} **Memory note ({who}):** {clean(e.get('note'))}"
     if k == "story_talk" and e.get("quiet"):
         return f"- {at} _({who} was too tired or had nothing new to say about the story)_"
     if k == "story_time_stopped":

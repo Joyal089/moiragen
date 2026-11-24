@@ -184,5 +184,60 @@ assert [k for k, _ in shown] == ["story_time", "thinking", "story_talk", "thinki
 assert shown[0][1] == {"title": "A rainy day", "text": "Rain taps on the window."}
 print("[ok] The narrator's words go to the viewer before his answer (and nothing extra when there are none)")
 
+# ---------------- 8. (v2.4) His own feelings are never a verdict ----------------
+BACK = ("The patterns shifted now, returning to their usual quiet hum. It’s good to be back here, within myself "
+        "– those little narratives felt… distant.")
+for his_own in [BACK, "It felt cold to me, being alone.", "Something in me felt empty.",
+                "I sat down across from her. It felt… hollow, listening to her."]:
+    assert verdict_in(his_own) is None, his_own
+for verdict in ["Nanite Two's answer felt distant.", "Nanite Two's answer felt distant to me.",
+                "Your answer felt distant to me.", "I read your answer. It felt distant.", "They felt distant to me.",
+                "It felt inefficient to me.", "It felt cold to me, but the failure to communicate was wrong."]:
+    assert verdict_in(verdict), verdict
+speak = Says([BACK])
+with patch.object(storytime, "think", speak):
+    assert moiragen_says(m, "A rainy day", "You are yourself again.") == BACK
+assert len(speak.prompts) == 1, "he is not asked to rewrite his own feelings"
+assert storytime.without_verdicts("Nanite Two's answer felt distant. " + BACK) == BACK
+print("[ok] (v2.4) His own feelings (\"felt… distant\") are left as he said them; \"Nanite Two's answer felt "
+      "distant\" and \"It felt inefficient to me\" are still caught")
+
+# ---------------- 9. (v2.4) Reflections are written down as they were said ----------------
+from moiragen.storytime import record_reflection
+PLAYED = "Narrator: Rosa is tired.\nMoiragen: I offered Rosa an ice cream and held her hand."
+SAID = "The pauses felt natural, and that felt correct. Perhaps focus less on quantifying the sensation."
+with patch.object(mind_mod, "think", Says([])), patch.object(storytime, "think", Says([])):   # nobody is asked again
+    flags = record_reflection("Starlight (pretend play)", one.name, SAID, "What did you notice?", PLAYED, start=True)
+    assert flags == {"fairness": "quantifying", "made_up": []}, flags
+    fine = record_reflection("Starlight (pretend play)", two.name, "The ice cream felt correct.", "What?", PLAYED)
+    assert fine == {"fairness": None, "made_up": []}, fine
+    true = record_reflection("Starlight (pretend play)", three.name,
+                             "I observed that he offered Rosa an ice cream.", "What?", PLAYED)
+    assert true["made_up"] == [], true
+    invented = record_reflection("Starlight (pretend play)", three.name,
+                                 "Yesterday I saw Nanite One build a rocket on the moon.", "What?", PLAYED)
+    assert invented["made_up"], invented
+noted = list(read_events(kind="path_story", last=4))
+assert noted[0]["text"] == SAID, "word for word"
+notes = [e["who"] for e in read_events(kind="story_flag", last=10)]
+assert notes == [one.name, three.name], notes
+shown = render(list(read_events(kind="story_flag", last=2))[0])
+assert "only noted" in shown and "\"quantifying\"" in shown
+print("[ok] (v2.4) A nanite's reflection is recorded word for word, nobody is asked to rephrase, and what the "
+      "checks would flag is only noted (praise and true observations are not)")
+
+# ---------------- 10. (v2.4) Labels and restored lines survive a rebuild from the life log ----------------
+from moiragen import mother as mother_mod
+last = list(read_events(kind="story_time", who="Moiragen", last=1))[0]
+label = "[Pretend play, not my real life] " + last["text"]
+log_event("memory_note", "Moiragen", note="Labelled one memory as pretend play.",
+          changes=[{"time": last["time"], "old": last["text"], "new": label}])
+assert "**Memory note (Moiragen):** Labelled" in render(list(read_events(kind="memory_note", last=1))[0])
+mother_mod.MOIRAGEN_FILE.write_text("{ broken", encoding="utf-8")
+again = Moiragen.load()
+texts = [x["text"] for x in again.memories]
+assert label in texts and last["text"] not in texts, texts[-4:]
+print("[ok] (v2.4) If his memory file is ever damaged, the rebuild keeps the pretend-play labels")
+
 print("\nStep 22 passed: story time is free talk with the echo guard on, no verdicts, no health changes, "
       "and it stops when anyone gets tired.")

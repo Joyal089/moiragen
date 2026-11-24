@@ -675,11 +675,16 @@ class Moiragen:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         MOIRAGEN_FILE.rename(MOIRAGEN_FILE.with_name(f"moiragen.broken-{stamp}.json"))
         m = cls()
+        # v2.4: labels and restored lines added to a memory later are kept in the rebuild too.
+        # (Keyed by time as well, so the same words said at another time are left alone.)
+        notes = {(c["time"], c["old"]): c["new"] for e in read_events(kind="memory_note", who="Moiragen", last=5000)
+                 for c in e.get("changes", [])}
         for e in read_events(who="Moiragen", last=5000):
             if e["kind"] == "reflection" and e.get("about_me"):
                 m.self_knowledge.append({"time": e["time"], "text": e["about_me"], "from": e.get("decision_id", "")})
             elif "text" in e and e["kind"] not in ("training_example",):
-                m.memories.append({"time": e["time"], "kind": e["kind"], "text": e["text"]})
+                m.memories.append({"time": e["time"], "kind": e["kind"],
+                                   "text": notes.get((e["time"], e["text"]), e["text"])})
         m.memories = m.memories[-MEMORY_KEEP:]
         m.self_knowledge = m.self_knowledge[-30:]
         m.remember("rebuilt", f"I woke up with a damaged memory file ({error.__class__.__name__}) "

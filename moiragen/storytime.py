@@ -18,10 +18,12 @@ If any nanite's energy is below STOP_BELOW, story time stops (before the next tu
 import re
 
 from .echo import NANITES, guard as echo_guard
+from .facts import false_past_claims
 from .llm import think
 from .memory_log import log_event
 from .mind import FEELINGS_ARE_FINE, nanite_think
-from .mother import MADE_OF_NANITES, PUSHY, Moiragen, about_myself, brief
+from .mother import (DISMISSIVE, MADE_OF_NANITES, NOT_TO_THEM, STYLE_TALK, TO_THEM, TOWARD_MEASURING, Moiragen,
+                     _found_in, _key_words, about_myself, brief)
 from .nanite import Nanite
 
 STOP_BELOW = 30          # stop story time if any nanite's energy is below this
@@ -47,25 +49,117 @@ STORY_VERDICT = re.compile(
 # nanite's story, not about himself (from the Willow Bay session).
 I_OBSERVED = re.compile(r"^\W*(?:and |but |so )?I (?:\w+ly )?(?:noted|noticed|observed|saw|registered|found|"
                         r"think|thought|believe|felt that|see)\b", re.IGNORECASE)
+# Praise is not a verdict when a nanite reflects on a story ("that felt correct").
+PRAISE = re.compile(r"^(?:correct(?:ly)?|right(?:ly)?|the (?:right|correct) (?:choice|thing|way|decision))$",
+                    re.IGNORECASE)
 NO_VERDICT_NOTE = ("Story time has no right or wrong, so this judges a choice. Say what you noticed or "
                    "felt instead, without rating anyone's choices.")
 
 
-def verdict_in(text: str):
-    """The first words in `text` that judge someone's choices (a story-time verdict, or
-    the usual dismissive or style words), or None. Sentences about himself never count."""
+# v2.4: his own feelings are never a verdict. After the Rainy Day story he said "It's good to
+# be back here, within myself - those little narratives felt... distant", and "felt distant"
+# was rewritten as if he had judged somebody's answer.
+ABOUT_ME = re.compile(r"\b(?:I|me|my|myself)\b", re.IGNORECASE)
+FEELING = re.compile(r"\b(?:feel|feels|feeling|felt)\b", re.IGNORECASE)
+IT_FELT = re.compile(r"^\W*(?:and |but |so )?it (?:feels|felt)\b", re.IGNORECASE)
+# The nanites ("they"), or somebody's answer or choice: then the feeling is about them.
+SOMEONE = re.compile(r"\b(?:they|their|who|moiragen|answers?|choices?|decisions?|suggestions?|repl(?:y|ies)|"
+                     r"reflections?|responses?)\b", re.IGNORECASE)
+# These words rate something, even after "felt" ("it felt inefficient to me").
+RATING = re.compile(r"efficien|effective|illogical|flawed|suboptimal|correct|better|worse|should|\bthe ",
+                    re.IGNORECASE)
+
+
+def _about_someone(sentence: str) -> bool:
+    """Does the sentence mention a nanite, or somebody's answer or choice?"""
+    return bool(SOMEONE.search(sentence) or TO_THEM.search(NOT_TO_THEM.sub("", sentence)))
+
+
+def my_own_feeling(sentence: str, found, before: str = "") -> bool:
+    """Are the flagged words (`found`, a match in `sentence`) his own feeling? Only if:
+      - a feeling word is part of them, or comes just before them ("felt... distant"),
+      - he is talking about himself: "I", "me" or "myself" is in the sentence, or it is
+        "It felt..." right after a sentence (`before`) about himself,
+      - and nobody else is in it: "Nanite Two's answer felt distant to me" is not his own."""
+    words_before = re.findall(r"\w+", sentence[:found.start()])[-3:]
+    if RATING.search(found.group(0)) or not (FEELING.match(found.group(0))
+                                             or any(FEELING.fullmatch(w) for w in words_before)):
+        return False
+    mine = ABOUT_ME.search(sentence) or (IT_FELT.search(sentence) and about_myself(before)
+                                         and not _about_someone(before))
+    return bool(mine) and not _about_someone(sentence)
+
+
+def _flagged(sentence: str):
+    """Every match in one sentence that could be a verdict, one after the other."""
+    yield from STORY_VERDICT.finditer(sentence)
+    if not about_myself(sentence):           # the usual fairness words (see mother.PUSHY)
+        for pattern in (DISMISSIVE, TOWARD_MEASURING, STYLE_TALK):
+            yield from pattern.finditer(sentence)
+
+
+def _verdicts(text: str, reflection: bool = False) -> list:
+    """Each sentence of `text` with the first words in it that judge, or None."""
+    out, before = [], ""
     for sentence in re.split(r"(?<=[.!?])\s+", text or ""):
-        if about_myself(sentence) and not I_OBSERVED.search(sentence):
-            continue
-        found = STORY_VERDICT.search(sentence) or PUSHY.search(sentence)
-        if found:
-            return found
-    return None
+        judged = None
+        if not about_myself(sentence) or I_OBSERVED.search(sentence):
+            for found in _flagged(sentence):
+                fine = PRAISE.match(found.group(0)) if reflection else my_own_feeling(sentence, found, before)
+                if not fine:
+                    judged = found
+                    break
+        out.append((sentence, judged))
+        before = sentence
+    return out
+
+
+def verdict_in(text: str, reflection: bool = False):
+    """The first words in `text` that judge someone's choices (a story-time verdict, or
+    the usual dismissive or style words), or None. Sentences about himself and his own
+    feelings never count.
+
+    reflection: for what a nanite says about a story. Praise ("that felt correct") does
+    not count then; "felt distant" does, because it talks about how Moiragen played."""
+    return next((judged for _, judged in _verdicts(text, reflection) if judged), None)
 
 
 def without_verdicts(text: str) -> str:
     """`text` with every sentence that judges someone's choices taken out."""
-    return " ".join(s for s in re.split(r"(?<=[.!?])\s+", text or "") if not verdict_in(s)).strip()
+    return " ".join(sentence for sentence, judged in _verdicts(text) if not judged).strip()
+
+
+# ---------------- what the nanites say about a story (v2.4) ----------------
+
+# Reporting words and names: they say who talked, not what happened in the story.
+REPORTING = {"moiragen", "nanite", "one", "two", "three", "observed", "noticed", "wondered", "noted", "story",
+             "offered", "offering", "asked", "asking", "said", "told", "mentioned", "suggested", "stated",
+             "decided", "chose"}
+
+
+def really_happened(sentence: str, story: str) -> bool:
+    """True if nearly all of the sentence's own key words really are in the story, so
+    "I observed that he offered Rosa an ice cream" is not called a made-up memory."""
+    keys = [w for w in _key_words(sentence) if w.lower() not in REPORTING]
+    return bool(keys) and sum(_found_in(w, story.lower()) for w in keys) / len(keys) >= 0.8
+
+
+def record_reflection(title: str, who: str, text: str, question: str, story: str, start: bool = False) -> dict:
+    """Write down what a nanite said about a story, word for word. Nobody is ever asked to
+    say it again. What the checks would flag is only logged beside it ("story_flag"):
+
+      fairness: the words that sound like a verdict or a harsh word, or None
+      made_up:  sentences that claim a past that did not happen (see facts.py)
+
+    story: the story word for word, to tell a true observation from a made-up memory."""
+    found = verdict_in(text, reflection=True)
+    claims = false_past_claims([{"nanite": who, "text": text}], question).get(who, [])
+    flags = {"fairness": found.group(0) if found else None,
+             "made_up": [c for c in claims if not really_happened(c, story)]}
+    log_event("path_story", "mind", title=title, part=who, text=text, start=start)
+    if flags["fairness"] or flags["made_up"]:
+        log_event("story_flag", who, story=title, **flags)
+    return flags
 
 
 def no_verdicts(title: str, text: str, system: str, sentences: int, max_tokens: int) -> str:
