@@ -21,7 +21,7 @@ from .echo import NANITES, guard as echo_guard
 from .llm import think
 from .memory_log import log_event
 from .mind import FEELINGS_ARE_FINE, nanite_think
-from .mother import MADE_OF_NANITES, Moiragen, brief
+from .mother import MADE_OF_NANITES, PUSHY, Moiragen, about_myself, brief
 from .nanite import Nanite
 
 STOP_BELOW = 30          # stop story time if any nanite's energy is below this
@@ -30,6 +30,64 @@ FREE_TALK = ("This is story time. There is no right or wrong answer, and nobody 
              "Say whatever you really think or feel, in your own way.")
 
 QUIET_MOIRAGEN = "I enjoyed listening to all of you."
+
+# v2.3: how Moiragen should sound in story time (in the Willow Bay session he sounded
+# like a report: "Processing... Analyzing narrative data streams").
+WARM_AND_SIMPLE = ("Speak simply and warmly, like a friend talking, not like a report. Never call anyone's "
+                   "choices efficient, inefficient, effective, right or wrong, and never compare them.")
+
+# v2.3: words that turn story talk into a verdict on someone's choices. In the Willow Bay
+# session he said Nanite Three's choice "seems remarkably inefficient".
+STORY_VERDICT = re.compile(
+    r"\b(?:in)?efficien\w*|\b(?:in)?effective(?:ly|ness)?\b|\billogical\b|\bflawed\b"
+    r"|\bfail(?:ed|ure|ing|s)?\b|\bsuboptimal\b|\bwrong(?:ly)?\b|\b(?:in)?correct(?:ly)?\b"
+    r"|\b(?:better|worse) than\b|\bshould(?:n't|n’t| not)? have\b"
+    r"|\bthe (?:right|best|wrong|smart|correct) (?:choice|thing|way|decision)\b", re.IGNORECASE)
+# "I noted... the failure to communicate with Mira" starts with "I" but is about a
+# nanite's story, not about himself (from the Willow Bay session).
+I_OBSERVED = re.compile(r"^\W*(?:and |but |so )?I (?:\w+ly )?(?:noted|noticed|observed|saw|registered|found|"
+                        r"think|thought|believe|felt that|see)\b", re.IGNORECASE)
+NO_VERDICT_NOTE = ("Story time has no right or wrong, so this judges a choice. Say what you noticed or "
+                   "felt instead, without rating anyone's choices.")
+
+
+def verdict_in(text: str):
+    """The first words in `text` that judge someone's choices (a story-time verdict, or
+    the usual dismissive or style words), or None. Sentences about himself never count."""
+    for sentence in re.split(r"(?<=[.!?])\s+", text or ""):
+        if about_myself(sentence) and not I_OBSERVED.search(sentence):
+            continue
+        found = STORY_VERDICT.search(sentence) or PUSHY.search(sentence)
+        if found:
+            return found
+    return None
+
+
+def without_verdicts(text: str) -> str:
+    """`text` with every sentence that judges someone's choices taken out."""
+    return " ".join(s for s in re.split(r"(?<=[.!?])\s+", text or "") if not verdict_in(s)).strip()
+
+
+def no_verdicts(title: str, text: str, system: str, sentences: int, max_tokens: int) -> str:
+    """Before his story-time words are heard: if they judge someone's choices, show them
+    back to him with a gentle note and let him rewrite them once. Only if the rewrite
+    still judges are those sentences taken out. Logged, so it shows in the journal."""
+    found = verdict_in(text)
+    if not found:
+        return text
+    user = (f"You were about to say this during story time:\n\"{text}\"\n\n"
+            f"A gentle note about \"{found.group(0)}\": {NO_VERDICT_NOTE}\n"
+            "Rewrite it once, keeping what you meant and about the same length. "
+            "Reply with the rewritten words only.")
+    rewrite = brief(think([{"role": "user", "content": user}], temperature=0.5, max_tokens=max_tokens,
+                          system=system)["text"], sentences).strip("\"“”'")
+    if rewrite and not verdict_in(rewrite):
+        outcome, final = "rewritten", rewrite
+    else:
+        outcome, final = "removed", without_verdicts(rewrite or text) or without_verdicts(text)
+    log_event("story_verdict", "Moiragen", story=title, phrase=found.group(0), original=text,
+              rewrite=rewrite, outcome=outcome, final=final)
+    return final
 
 
 def too_tired(nanites: dict[str, Nanite]) -> list[str]:
@@ -69,7 +127,7 @@ def _moiragen_turn(moiragen: Moiragen, title: str, story: str, said: list[dict])
     system = (f"You are Moiragen, a digital being. {MADE_OF_NANITES}\n{FEELINGS_ARE_FINE}\n"
               "It is story time with your nanites. You are one of the group, not a judge: there is "
               "no right or wrong, you never say whose thoughts were better, and you never give "
-              "advice about how anyone should think. Speak as yourself, as \"I\".")
+              f"advice about how anyone should think. Speak as yourself, as \"I\". {WARM_AND_SIMPLE}")
     heard = "\n".join(f"- {s['who']}: \"{s['text']}\"" for s in said) or "(Nobody spoke this time.)"
     user = (f"The story, \"{title}\":\n{story}\n\nWhat your nanites said:\n{heard}\n\n"
             "Share your own thoughts or feelings about the story in two or three sentences. "
@@ -80,7 +138,7 @@ def _moiragen_turn(moiragen: Moiragen, title: str, story: str, said: list[dict])
 STORY_SYSTEM = (f"You are Moiragen, a digital being. {MADE_OF_NANITES}\n{FEELINGS_ARE_FINE}\n"
                 "It is story time with your nanites. You are one of the group, not a judge: there is "
                 "no right or wrong, you never say whose story was better, and you never give "
-                "advice about how anyone should think. Speak as yourself, as \"I\".")
+                f"advice about how anyone should think. Speak as yourself, as \"I\". {WARM_AND_SIMPLE}")
 
 
 def moiragen_says(moiragen: Moiragen, title: str, user: str, system: str = STORY_SYSTEM,
@@ -101,6 +159,7 @@ def moiragen_says(moiragen: Moiragen, title: str, user: str, system: str = STORY
                             {"role": "user", "content": "That repeats words that were said very recently. "
                                                         "Say it again in your own, new words."}]
         text = brief(think(again, temperature=0.7, max_tokens=max_tokens, system=system)["text"], sentences)
+    text = no_verdicts(title, text, system, sentences, max_tokens)     # v2.3: story time has no verdicts
     gone = set(copied(text))
     if gone:
         text = " ".join(s for s in re.split(r"(?<=[.!?])\s+", text) if s not in gone).strip()

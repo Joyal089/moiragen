@@ -67,6 +67,12 @@ def render(e: dict) -> str | None:
     if k == "path_story":                            # v2.2: a choose-your-path story
         head = f"\n#### {at} {clean(e.get('title'))}\n\n" if e.get("start") else ""
         return f"{head}- {at} **{clean(e.get('part'))}:** {clean(e.get('text'))}"
+    if k == "story_verdict":                         # v2.3: no verdicts in story time
+        done = (f"he rewrote it: \"{clean(e.get('rewrite'))}\"" if e.get("outcome") == "rewritten"
+                else f"his rewrite still judged, so those sentences were taken out. What everyone heard: "
+                     f"\"{clean(e.get('final'))}\"")
+        return (f"- {at} **No verdicts in story time:** Moiragen was about to say \"{clean(e.get('original'))}\". "
+                f"Gentle note on \"{e.get('phrase')}\": story time has no right or wrong. Then {done}")
     if k == "story_talk" and e.get("quiet"):
         return f"- {at} _({who} was too tired or had nothing new to say about the story)_"
     if k == "story_time_stopped":

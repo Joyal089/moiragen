@@ -139,5 +139,38 @@ assert "**Hidden scores:** Trust 2, Honesty 1, Care 3" in shown[1]
 print("[ok] (v2.2) Moiragen speaks freely about the stories (no judge), and a path story's acts and "
       "scores are written in the journal")
 
+# ---------------- 6. (v2.3) No verdicts in his story talk ----------------
+from moiragen.storytime import verdict_in
+INEFFICIENT = ("This demonstrated a prioritization of individual emotional states over immediate information "
+               "dissemination, which seems remarkably inefficient given the circumstances.")
+FAILURE = "I noted the deliberate attempt to mitigate Leo's distress, coupled with the failure to communicate directly with Mira."
+for verdict in [INEFFICIENT, FAILURE, "Nanite Two's choice was better than the others.",
+                "You made the right choice at the dock.", "That proved effective."]:
+    assert verdict_in(verdict), verdict
+for fine in ["I learned that reactive protocols, while effective in short bursts, can introduce delays.",
+             "Nanite Three tried to ease Leo's hurt, and I wondered how Mira felt.",
+             "I liked how Nanite Two told Mira about the sign right away.", "I was wrong about Kai at first."]:
+    assert verdict_in(fine) is None, fine
+print("[ok] The session's real verdicts (\"remarkably inefficient\", \"the failure to communicate\") are caught; "
+      "his own lessons and kind noticing are not")
+
+WARM = "I noticed Nanite Three cared about Leo's feelings first, and I wondered how Mira felt waiting to hear."
+speak = Says(["Nanite Three's story contained an interesting anomaly. " + INEFFICIENT, WARM])
+with patch.object(storytime, "think", speak):
+    said = moiragen_says(m, "The Storm Over Willow Bay", "What did you like in each story?")
+assert said == WARM, said
+assert "no right or wrong" in speak.prompts[1]["user"] and "\"inefficient\"" in speak.prompts[1]["user"]
+assert "Speak simply and warmly" in speak.prompts[0]["system"]
+note = list(read_events(kind="story_verdict", last=1))[0]
+assert note["outcome"] == "rewritten" and "**No verdicts in story time:**" in render(note)
+print("[ok] \"remarkably inefficient\" is shown back to him with a gentle note, and his rewrite is what everyone hears")
+
+speak = Says(["I liked Nanite One's honesty. " + INEFFICIENT, "I liked Nanite One's honesty. That was ineffective."])
+with patch.object(storytime, "think", speak):
+    said = moiragen_says(m, "The Storm Over Willow Bay", "What did you like in each story?")
+assert said == "I liked Nanite One's honesty.", said
+assert list(read_events(kind="story_verdict", last=1))[0]["outcome"] == "removed"
+print("[ok] If his rewrite still judges, only the judging sentence is taken out")
+
 print("\nStep 22 passed: story time is free talk with the echo guard on, no verdicts, no health changes, "
       "and it stops when anyone gets tired.")
