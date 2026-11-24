@@ -54,7 +54,7 @@ from .prediction import Predictor
 from .social import after_decision, social_round, needs_help
 from .stage import Stage
 from .story import story_path, write_daily_story
-from .storytime import tell_story
+from .storytime import moiragen_says, tell_story
 from .styles import describe as describe_style
 
 # --- Tunable numbers ---
@@ -296,6 +296,10 @@ class Mind:
         """Share a story and let everyone talk about it freely (v2.1, storytime.py)."""
         return self.call(self.handle_story_time, title, story, timeout=timeout)
 
+    def moiragen_story_talk(self, title: str, prompt: str, timeout: float = 600) -> dict:
+        """Moiragen speaks freely about a story (v2.2): no verdicts, echo guard on."""
+        return self.call(self.handle_moiragen_story_talk, title, prompt, timeout=timeout)
+
     # The jobs themselves (always run in the mind's thread):
     def handle_chat(self, nanite_id: str, text: str) -> dict:
         n = self.nanites[nanite_id]
@@ -334,6 +338,13 @@ class Mind:
             self.emit("story_time_stopped", title=title, too_tired=out["stopped"])
         self._vitals()
         return out
+
+    def handle_moiragen_story_talk(self, title: str, prompt: str) -> dict:
+        self.emit("thinking", who="Moiragen", about=f"story: {title}")
+        text = moiragen_says(self.moiragen, title, prompt, sentences=8, max_tokens=420)
+        self.emit("story_talk", who="Moiragen", round=3, text=text, story=title)
+        self._vitals()
+        return {"who": "Moiragen", "text": text}
 
     def handle_question(self, text: str) -> dict:
         self.emit("question", text=text)

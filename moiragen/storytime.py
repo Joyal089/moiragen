@@ -74,6 +74,19 @@ def _moiragen_turn(moiragen: Moiragen, title: str, story: str, said: list[dict])
     user = (f"The story, \"{title}\":\n{story}\n\nWhat your nanites said:\n{heard}\n\n"
             "Share your own thoughts or feelings about the story in two or three sentences. "
             "If you like, answer something one of them said, kindly, by name.")
+    return moiragen_says(moiragen, title, user, system)
+
+
+STORY_SYSTEM = (f"You are Moiragen, a digital being. {MADE_OF_NANITES}\n{FEELINGS_ARE_FINE}\n"
+                "It is story time with your nanites. You are one of the group, not a judge: there is "
+                "no right or wrong, you never say whose story was better, and you never give "
+                "advice about how anyone should think. Speak as yourself, as \"I\".")
+
+
+def moiragen_says(moiragen: Moiragen, title: str, user: str, system: str = STORY_SYSTEM,
+                  sentences: int = 3, max_tokens: int = 160) -> str:
+    """Moiragen answers `user` freely, as one of the group (v2.2): no verdicts, no
+    health changes, the echo guard on. He remembers what he said."""
     messages = [{"role": "user", "content": user}]
 
     def copied(text: str) -> list[str]:
@@ -81,13 +94,13 @@ def _moiragen_turn(moiragen: Moiragen, title: str, story: str, said: list[dict])
         return (echo_guard.check(text, NANITES, speaker="Moiragen").repeated
                 + echo_guard.check(text, "Moiragen", speaker="Moiragen").repeated)
 
-    text = brief(think(messages, temperature=0.6, max_tokens=160, system=system)["text"], 3)
+    text = brief(think(messages, temperature=0.6, max_tokens=max_tokens, system=system)["text"], sentences)
     if copied(text):
         log_event("echo_rejected", "Moiragen", text=text[:300], similar_to="story time", attempt=1)
         again = messages + [{"role": "assistant", "content": text},
                             {"role": "user", "content": "That repeats words that were said very recently. "
                                                         "Say it again in your own, new words."}]
-        text = brief(think(again, temperature=0.7, max_tokens=160, system=system)["text"], 3)
+        text = brief(think(again, temperature=0.7, max_tokens=max_tokens, system=system)["text"], sentences)
     gone = set(copied(text))
     if gone:
         text = " ".join(s for s in re.split(r"(?<=[.!?])\s+", text) if s not in gone).strip()

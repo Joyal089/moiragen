@@ -64,6 +64,9 @@ def render(e: dict) -> str | None:
         return f"\n#### {at} Story time: {clean(e.get('story'))}\n\n> {clean(e.get('text'))}\n"
     if k == "story_time":
         return f"- {at} **{who}** (story time): {clean(e.get('said') or e.get('text'))}"
+    if k == "path_story":                            # v2.2: a choose-your-path story
+        head = f"\n#### {at} {clean(e.get('title'))}\n\n" if e.get("start") else ""
+        return f"{head}- {at} **{clean(e.get('part'))}:** {clean(e.get('text'))}"
     if k == "story_talk" and e.get("quiet"):
         return f"- {at} _({who} was too tired or had nothing new to say about the story)_"
     if k == "story_time_stopped":

@@ -62,6 +62,11 @@ class StoryTimeBody(BaseModel):
     story: str
 
 
+class MoiragenTalkBody(BaseModel):
+    title: str = ""
+    prompt: str
+
+
 class FeedbackBody(BaseModel):
     decision_id: str
     verdict: str          # "right", "wrong" or "wait"; situational: "thoughtful", "okay", "needs_care"
@@ -166,6 +171,14 @@ def create_app(mind: Mind | None = None, start_mind: bool = True) -> FastAPI:
         if not body.story.strip():
             raise HTTPException(400, "Empty story")
         return await run_job(app.state.mind.story_time, body.title.strip() or "A story", body.story.strip())
+
+    @app.post("/api/storytime/moiragen")
+    async def storytime_moiragen(body: MoiragenTalkBody):
+        """Moiragen speaks freely about a story (v2.2), e.g. after a choose-your-path story."""
+        if not body.prompt.strip():
+            raise HTTPException(400, "Empty prompt")
+        return await run_job(app.state.mind.moiragen_story_talk, body.title.strip() or "A story",
+                             body.prompt.strip())
 
     @app.post("/api/active")
     def active():

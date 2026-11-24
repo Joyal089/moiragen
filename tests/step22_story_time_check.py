@@ -119,5 +119,25 @@ assert [s["who"] for s in out["said"]] == [one.name] and out["stopped"] == [one.
 print(f"[ok] {one.name} dropped to {one.energy:.0f} after speaking: story time stops before the next turn, "
       "and Moiragen does not go on")
 
+# ---------------- 5. (v2.2) Moiragen speaks freely after a choose-your-path story ----------------
+from moiragen.memory_log import log_event
+from moiragen.storytime import moiragen_says
+speak = Says(["I liked how each of you found a different way through the storm. From Nanite One I learned "
+              "that telling the truth early makes the rest easier."])
+with patch.object(storytime, "think", speak):
+    said = moiragen_says(m, "The Storm Over Willow Bay", "What did you like in each story?", sentences=8,
+                         max_tokens=420)
+assert said.startswith("I liked how each of you") and "not a judge" in speak.prompts[0]["system"]
+assert m.memories[-1]["said"] == said and health_after["Moiragen"] == m.health
+log_event("path_story", "mind", title="The Storm Over Willow Bay (Nanite One)", part="Opening",
+          text="A storm is coming.", start=True)
+log_event("path_story", "mind", title="The Storm Over Willow Bay (Nanite One)", part="Hidden scores",
+          text="Trust 2, Honesty 1, Care 3")
+shown = [render(e) for e in read_events(kind="path_story", last=2)]
+assert shown[0].startswith("\n#### ") and "**Opening:** A storm is coming." in shown[0]
+assert "**Hidden scores:** Trust 2, Honesty 1, Care 3" in shown[1]
+print("[ok] (v2.2) Moiragen speaks freely about the stories (no judge), and a path story's acts and "
+      "scores are written in the journal")
+
 print("\nStep 22 passed: story time is free talk with the echo guard on, no verdicts, no health changes, "
       "and it stops when anyone gets tired.")
