@@ -166,6 +166,14 @@ The first command only previews; `--apply` makes the change.
 
 This writes chat-format examples (`system` / `user` / `assistant`) to `memory/exports/`. Each example is labelled with who thought it, the task, whether Moiragen chose it, and your right/wrong feedback, so a later nightly fine-tune can learn from the good ones. Replies that copy a recent line are left out (the summary says how many).
 
+**What never becomes training data** (v2.5): an example is always left out if any part of it, its reply or its prompt, contains
+
+- words a made-up memory check flagged,
+- words that were corrected later,
+- anything from a story labelled as pretend play.
+
+Pretend play may stay in only if the question itself clearly says it is that story ("(Story time, after the pretend story…"), and then the example is marked `"story"` too. Made-up and corrected words never stay in, not even in a story. The rules (`moiragen/training_rules.py`) are worked out from the life log at export time, so a correction or a label you add today also covers everything from before, and the life log itself is never changed.
+
 ## Tests
 
 Each build step has a check in `tests/`. Each one uses a throwaway memory folder, so it never touches his real memory. Ollama must be running.
@@ -198,6 +206,7 @@ moiragen/
   storytime.py   story time: a story shared, talked about freely, no verdicts
   loop.py        the thinking loop that runs his whole life (rests while you are away)
   export.py      fine-tuning export
+  training_rules.py  what never becomes fine-tuning data
   backup.py      verified backups of the memory folder
   cleanup.py     the one-off removal of the echo loop's extra copies
 server.py        web server + live event stream

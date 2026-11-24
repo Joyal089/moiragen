@@ -1,5 +1,8 @@
 """Export Moiragen's life log as fine-tuning data (saved in memory/exports/).
 
+Copies, and anything made-up, corrected or pretend play, are always left out
+(see moiragen/training_rules.py).
+
 Run from the project folder:
     .venv\\Scripts\\python.exe export.py                    everything
     .venv\\Scripts\\python.exe export.py --since 2026-11-21 only from that day on

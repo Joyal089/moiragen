@@ -18,6 +18,10 @@ Replies that copy a line said shortly before them (the echo loop, see
 echo.py) are left out: the echo check is replayed over the whole log, so
 copies from before the live guard existed never become training data either.
 
+Anything flagged as made-up, corrected, or labelled as pretend play is left out
+too (v2.5, see training_rules.py). Pretend play stays in only if its question
+clearly says it is that story; the example then says so as well ("story": title).
+
 Exports go to memory/exports/ so they stay private (never pushed to Git).
 """
 
@@ -28,6 +32,7 @@ import json
 from .config import MEMORY_DIR
 from .echo import NANITES, EchoGuard
 from .memory_log import read_events
+from .training_rules import TrainingRules
 
 EXPORT_DIR = MEMORY_DIR / "exports"
 
@@ -52,12 +57,13 @@ def build_examples(since: str | None = None, skip_wrong: bool = False,
                    stats: dict | None = None) -> list[dict]:
     """All training examples (optionally only those on/after `since`, YYYY-MM-DD).
 
-    stats: pass a dict to learn how many copied replies were left out.
+    stats: pass a dict to learn how many were left out, and why.
     """
     events = read_events(last=10**9)
     chosen, feedback = _decision_labels(events)
     replay = EchoGuard(seed_from_log=False)   # the echo check, replayed from the start
-    out, repeats = [], 0
+    rules = TrainingRules(events)             # made-up, corrected, pretend play (v2.5)
+    out, repeats, left_out = [], 0, Counter()
     for e in events:
         if e["kind"] == "decision_full" and e.get("question"):
             replay.allow(e["question"])         # the human's words may be repeated (v1.8)
@@ -72,6 +78,10 @@ def build_examples(since: str | None = None, skip_wrong: bool = False,
         if copy:
             repeats += 1
             continue
+        why_not = rules.why_not(e)
+        if why_not:
+            left_out[why_not] += 1
+            continue
         did = e.get("decision_id")
         fb = feedback.get(did)
         if skip_wrong and fb in ("wrong", "harmful"):
@@ -82,9 +92,12 @@ def build_examples(since: str | None = None, skip_wrong: bool = False,
                   "task": e.get("task", "chat"), "decision_id": did, "feedback": fb}
         if e.get("task") == "suggest" and did in chosen:
             record["chosen"] = chosen[did] == e["who"]
+        if rules.story_mark(e):
+            record["story"] = rules.story_mark(e)          # pretend play, clearly marked as a story
         out.append(record)
     if stats is not None:
         stats["left_out_repeats"] = repeats
+        stats["left_out"] = {why: left_out[why] for why in ("made_up", "corrected", "pretend")}
     return out
 
 
@@ -122,6 +135,10 @@ def export_training(since: str | None = None, skip_wrong: bool = False) -> tuple
     summary = {
         "examples": len(examples),
         "left_out_repeats": stats["left_out_repeats"],
+        "left_out_made_up": stats["left_out"]["made_up"],
+        "left_out_corrected": stats["left_out"]["corrected"],
+        "left_out_pretend_play": stats["left_out"]["pretend"],
+        "marked_as_story": sum("story" in ex for ex in examples),
         "by_mind": dict(Counter(ex["who"] for ex in examples)),
         "by_task": dict(Counter(ex["task"] for ex in examples)),
         "marked_right": sum(ex["feedback"] == "right" for ex in examples),
