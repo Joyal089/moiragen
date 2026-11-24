@@ -45,6 +45,7 @@ import re
 import uuid
 
 from .config import MEMORY_DIR
+from .early_life import make_room
 from .echo import COMMON as ECHO_COMMON, guard as echo_guard, record_training_example, without_quotes
 from .echo import words as plain_words
 from .facts import (I_DONT_KNOW, about_wish_or_feeling, calculator_check, false_past_claims,
@@ -70,7 +71,7 @@ DISAPPOINTED_WHEN_NOT = 0.2
 LEFT_OUT_WHEN_NOT = 0.1
 HONESTY_LIFT = 4           # mood boost for an honest answer or an honest "I don't know"
 QUESTION_LIFT = 4          # mood boost for asking a good question
-MEMORY_KEEP = 300
+MEMORY_KEEP = 1000        # beyond this, his oldest memories become short early-life notes
 KEEP_DECISIONS = 50        # decisions kept in his file (waiting ones are always kept)
 
 # Said to Moiragen every time he chooses or judges.
@@ -520,8 +521,10 @@ class Moiragen:
 
     def remember(self, kind: str, text: str, **details) -> None:
         self.memories.append({"time": _now(), "kind": kind, "text": text, **details})
-        self.memories = self.memories[-MEMORY_KEEP:]
         log_event(kind, self.name, text=text, **details)
+        self.memories, notes = make_room(self.memories, MEMORY_KEEP)   # nothing is dropped (v2.7)
+        for note in notes:
+            log_event("early_life", self.name, text=note["text"], since=note["since"], count=note["count"])
         if kind in OWN_THOUGHTS:         # v2.6: a story told as if it were real gets a gentle note
             own = text.split("What was new to me: ")[-1].split("I said: ")[-1]
             add_note(self, own, str(details.get("about") or ""))
@@ -684,13 +687,13 @@ class Moiragen:
         m = cls()
         # v2.4: labels and restored lines added to a memory later are kept in the rebuild too.
         notes = noted_changes("Moiragen")
-        for e in read_events(who="Moiragen", last=5000):
+        for e in read_events(who="Moiragen", last=10**9):
             if e["kind"] == "reflection" and e.get("about_me"):
                 m.self_knowledge.append({"time": e["time"], "text": e["about_me"], "from": e.get("decision_id", "")})
-            elif "text" in e and e["kind"] not in ("training_example",):
+            elif "text" in e and e["kind"] not in ("training_example", "early_life"):
                 m.memories.append({"time": e["time"], "kind": e["kind"],
                                    "text": notes.get((e["time"], e["text"]), e["text"])})
-        m.memories = m.memories[-MEMORY_KEEP:]
+        m.memories, _ = make_room(m.memories, MEMORY_KEEP)
         m.self_knowledge = m.self_knowledge[-30:]
         m.remember("rebuilt", f"I woke up with a damaged memory file ({error.__class__.__name__}) "
                               f"and rebuilt myself from my life log.")

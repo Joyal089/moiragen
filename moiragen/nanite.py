@@ -13,6 +13,7 @@ import os
 
 from .blueprint import get_blueprint, random_temperament
 from .config import MEMORY_DIR
+from .early_life import make_room
 from .memory_log import log_event, noted_changes, read_events
 from .styles import starting_style
 
@@ -97,9 +98,11 @@ class Nanite:
     def remember(self, kind: str, text: str, **details) -> None:
         """Add a memory to this nanite and to the shared life log."""
         self.memories.append({"time": _now(), "kind": kind, "text": text, **details})
-        keep = self.blueprint["memory_keep"]
-        self.memories = self.memories[-keep:]  # forget the oldest beyond the limit
         log_event(kind, self.name, text=text, **details)
+        # Beyond the limit the oldest become short early-life notes; nothing is dropped (v2.7).
+        self.memories, notes = make_room(self.memories, self.blueprint["memory_keep"])
+        for note in notes:
+            log_event("early_life", self.name, text=note["text"], since=note["since"], count=note["count"])
 
     def learn(self, lesson: str, source: str) -> None:
         """Keep a lesson. Lessons last longer than ordinary memories and are
@@ -224,7 +227,10 @@ class Nanite:
             if "last_awake" not in data:
                 # Files from before sleep existed: it was last awake when its file was last saved.
                 data["last_awake"] = datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds")
-            return cls(**data)
+            n = cls(**data)
+            # Its own copy of the blueprint may be from when the limit was 200 (v2.7).
+            n.blueprint["memory_keep"] = max(n.blueprint.get("memory_keep", 0), get_blueprint()["memory_keep"])
+            return n
         except FileNotFoundError:
             raise
         except (json.JSONDecodeError, TypeError, KeyError) as e:
@@ -257,12 +263,13 @@ class Nanite:
         births = read_events(kind="birth", who=name, last=1)
         if births:
             n.temperament = births[0]["temperament"]
-        recovered = [e for e in read_events(who=name, last=2000) if "text" in e]
+        # (Early-life notes are made again from the memories themselves.)
+        recovered = [e for e in read_events(who=name, last=10**9) if "text" in e and e["kind"] != "early_life"]
         notes = noted_changes(name)      # labels added to a memory later (v2.6)
-        n.memories = [
+        n.memories, _ = make_room([
             {"time": e["time"], "kind": e["kind"], "text": notes.get((e["time"], e["text"]), e["text"])}
             for e in recovered
-        ][-bp["memory_keep"]:]
+        ], bp["memory_keep"])
         n.lessons = [
             {"time": e["time"], "lesson": e["text"], "source": e.get("source", "")}
             for e in read_events(kind="lesson", who=name, last=20)

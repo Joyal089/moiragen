@@ -43,9 +43,10 @@ BLUEPRINT = {
         "patience":    (0.35, 0.65),  # how long before it gets tired or annoyed
     },
 
-    # Keep this many recent memories inside the nanite file.
+    # Keep this many memories inside the nanite file. Beyond that, the oldest become short
+    # "early life" notes (see early_life.py); gentle notes and corrections never count.
     # (Everything is also in memory/log.jsonl forever.)
-    "memory_keep": 200,
+    "memory_keep": 1000,
 }
 
 
