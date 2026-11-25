@@ -49,11 +49,23 @@ STORY_VERDICT = re.compile(
 # nanite's story, not about himself (from the Willow Bay session).
 I_OBSERVED = re.compile(r"^\W*(?:and |but |so )?I (?:\w+ly )?(?:noted|noticed|observed|saw|registered|found|"
                         r"think|thought|believe|felt that|see)\b", re.IGNORECASE)
+# v2.9: these rate somebody only when they are about a nanite ("Nanite Three, you noted the
+# hum: that's accurate", "how Nanite One phrased it does lack something"). "I lack something"
+# and "the picture on the wall lacks something" are fine, and so is a question.
+RATES_A_NANITE = re.compile(
+    r"\black(?:s|ed|ing)?\W+(?:a little |just )?something\b"
+    r"|\b(?:that|this|it|which)(?:['’]s|\W+(?:is|was|seems|sounds))\W+(?:(?:not|quite|very|so|\w+ly)\W+)?accurate\b",
+    re.IGNORECASE)
+A_NANITE = re.compile(r"\byou(?:rs?)?\b|\bnanites?\b|\bthe others\b", re.IGNORECASE)
+A_NANITES_OWN = re.compile(r"\b(?:One|Two|Three)['’]s\b")      # "One's words" (with a capital letter)
+# "That's accurate." right after a sentence about a nanite is still about that nanite.
+STILL_ABOUT_IT = re.compile(r"^\W*(?:(?:and|but|so|yes|no|well)\W+)*(?:that|this|it|which|they|their)\b",
+                            re.IGNORECASE)
 # Praise is not a verdict when a nanite reflects on a story ("that felt correct").
-PRAISE = re.compile(r"^(?:correct(?:ly)?|right(?:ly)?|the (?:right|correct) (?:choice|thing|way|decision))$",
-                    re.IGNORECASE)
+PRAISE = re.compile(r"^(?:correct(?:ly)?|right(?:ly)?|the (?:right|correct) (?:choice|thing|way|decision)"
+                    r"|(?:that|this|it|which)\W.*(?<!not )accurate)$", re.IGNORECASE)
 NO_VERDICT_NOTE = ("Story time has no right or wrong, so this judges a choice. Say what you noticed or "
-                   "felt instead, without rating anyone's choices.")
+                   "felt instead, without rating anyone's choices or words.")
 
 
 # v2.4: his own feelings are never a verdict. After the Rainy Day story he said "It's good to
@@ -90,9 +102,19 @@ def my_own_feeling(sentence: str, found, before: str = "") -> bool:
     return bool(mine) and not _about_someone(sentence)
 
 
-def _flagged(sentence: str):
+def _about_a_nanite(sentence: str, before: str = "") -> bool:
+    """Is the sentence about a nanite: by name or "you", or does it go on ("That's...",
+    "They...") about the nanite in the sentence `before` it?"""
+    def named(s: str) -> bool:
+        return bool(A_NANITE.search(s) or A_NANITES_OWN.search(s))
+    return named(sentence) or bool(STILL_ABOUT_IT.search(sentence)) and named(before)
+
+
+def _flagged(sentence: str, before: str = ""):
     """Every match in one sentence that could be a verdict, one after the other."""
     yield from STORY_VERDICT.finditer(sentence)
+    if not sentence.rstrip("\"”' ").endswith("?") and _about_a_nanite(sentence, before):      # v2.9
+        yield from RATES_A_NANITE.finditer(sentence)
     if not about_myself(sentence):           # the usual fairness words (see mother.PUSHY)
         for pattern in (DISMISSIVE, TOWARD_MEASURING, STYLE_TALK):
             yield from pattern.finditer(sentence)
@@ -104,7 +126,7 @@ def _verdicts(text: str, reflection: bool = False) -> list:
     for sentence in re.split(r"(?<=[.!?])\s+", text or ""):
         judged = None
         if not about_myself(sentence) or I_OBSERVED.search(sentence):
-            for found in _flagged(sentence):
+            for found in _flagged(sentence, before):
                 fine = PRAISE.match(found.group(0)) if reflection else my_own_feeling(sentence, found, before)
                 if not fine:
                     judged = found
