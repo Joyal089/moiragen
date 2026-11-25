@@ -35,3 +35,8 @@ OLLAMA_REPEAT_LAST_N = int(os.getenv("OLLAMA_REPEAT_LAST_N", "-1"))
 _memory = Path(os.getenv("MEMORY_DIR", "./memory"))
 MEMORY_DIR = _memory if _memory.is_absolute() else (PROJECT_DIR / _memory).resolve()
 MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+
+# The Moiragen folder in Google Drive, for copies of finished backups (see drive.py).
+# Not set = no copies.
+_drive = os.getenv("DRIVE_DIR", "").strip()
+DRIVE_DIR = Path(_drive) if _drive else None

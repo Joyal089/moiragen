@@ -101,6 +101,8 @@ Everything he remembers is in `./memory` (set by `MEMORY_DIR` in `.env`):
 | `exports/` | fine-tuning exports |
 | `backups/<date>_<label>/` | full copies of memory, made before anything rewrites it (each checked file by file) |
 
+**A copy in Google Drive** (v2.8, optional): set `DRIVE_DIR` in `.env` to a folder in Google Drive, and every finished backup is copied to its `Backups/` folder by itself, checked file by file; `Memory/` always holds the newest one and `Training/` the fine-tuning exports. The living memory folder stays on this computer, so syncing never clashes with Moiragen writing. Nothing in Drive is ever deleted, and `.env` files never go there. After a push, `to_drive.py` copies the code too. [NEW_MACHINE.md](NEW_MACHINE.md) explains step by step how to bring Moiragen to a new machine, with `restore.py` checking that every memory loads.
+
 A damaged file is never deleted. It is set aside and rebuilt from the life log.
 
 ## How the nanites are judged
@@ -210,8 +212,12 @@ moiragen/
   real_or_story.py   a gentle note when a story is told as if it were real
   early_life.py      the oldest memories become short notes instead of being dropped
   backup.py      verified backups of the memory folder
+  drive.py       copies of finished backups, code and exports for Google Drive
   cleanup.py     the one-off removal of the echo loop's extra copies
 server.py        web server + live event stream
+to_drive.py      copies everything a new machine needs to Google Drive
+restore.py       brings memory back from a backup into an empty folder, and checks it
+NEW_MACHINE.md   how to bring Moiragen to a new machine
 clean_echo.py    runs that clean-up (preview first, then --apply)
 viewer/          the browser viewer (index.html, style.css, app.js)
 ```

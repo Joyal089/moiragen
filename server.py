@@ -32,6 +32,7 @@ Endpoints:
 
 import asyncio
 import json
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -41,6 +42,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from moiragen.drive import after_backup
 from moiragen.llm import BrainError
 from moiragen.loop import Mind
 
@@ -108,6 +110,8 @@ def create_app(mind: Mind | None = None, start_mind: bool = True) -> FastAPI:
         app.state.mind.subscribe(broadcaster.publish)
         if start_mind:
             app.state.mind.start()
+            # Any finished backup that Google Drive does not have yet is copied now.
+            threading.Thread(target=after_backup, daemon=True).start()
         yield
         # Shutdown: let him finish his current thought and stop.
         if start_mind:

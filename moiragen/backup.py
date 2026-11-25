@@ -3,7 +3,8 @@
 Before anything rewrites memory (like the echo clean-up), copy the whole
 memory folder into memory/backups/<date>_<label>/ and check that every file
 arrived intact. The backups live inside memory/, so, like the rest of memory,
-they stay on this computer and are never pushed to Git.
+they are never pushed to Git. If DRIVE_DIR is set, each finished backup is also
+copied to Google Drive (see drive.py).
 
 To undo a change, stop Moiragen and call restore_memory(<backup folder>).
 """
@@ -56,6 +57,7 @@ def backup_memory(label: str = "backup") -> Path:
 
     newest = sorted(backups.glob(f"*/{MANIFEST}"))  # names start with the date, so this is oldest -> newest
     if newest and json.loads(newest[-1].read_text(encoding="utf-8")) == current:
+        _copy_to_drive()
         return newest[-1].parent
 
     target = backups / f"{datetime.now():%Y-%m-%d_%H%M%S}_{label}"
@@ -68,7 +70,13 @@ def backup_memory(label: str = "backup") -> Path:
     if manifest(target) != current:
         raise RuntimeError(f"Backup check failed: {target} does not match the memory folder.")
     (target / MANIFEST).write_text(json.dumps(current, indent=1), encoding="utf-8")
+    _copy_to_drive()
     return target
+
+
+def _copy_to_drive() -> None:
+    from .drive import after_backup      # here, because drive.py needs this module
+    after_backup()
 
 
 def restore_memory(backup: Path) -> None:

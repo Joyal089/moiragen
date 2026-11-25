@@ -30,6 +30,7 @@ from datetime import datetime
 import json
 
 from .config import MEMORY_DIR
+from .drive import after_backup
 from .echo import NANITES, EchoGuard
 from .memory_log import read_events
 from .training_rules import TrainingRules
@@ -145,4 +146,5 @@ def export_training(since: str | None = None, skip_wrong: bool = False) -> tuple
         "marked_wrong": sum(ex["feedback"] == "wrong" for ex in examples),
         "life": life_summary(since),
     }
+    after_backup()                 # Drive gets a copy, if it is set up (see drive.py)
     return str(path), summary
