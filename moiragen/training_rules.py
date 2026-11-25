@@ -62,7 +62,13 @@ def made_up_words(events: list[dict]) -> list[str]:
                     out += ast.literal_eval(found.group(1))
                 except (ValueError, SyntaxError):
                     pass
-    return [plain(t) for t in out if t]
+    mistakes = taken_back(events)
+    return [plain(t) for t in out if t and plain(t) not in mistakes]
+
+
+def taken_back(events: list[dict]) -> set[str]:
+    """v3.0: claims that were flagged by mistake (they were true after all), so they are free again."""
+    return {plain(e["claim"]) for e in events if e["kind"] == "flag_removed"}
 
 
 # ---------------- 2. corrected words ----------------
@@ -73,6 +79,9 @@ def corrected_words(events: list[dict]) -> tuple[list[str], set]:
     A correction says whose words it corrects and from when. If it quotes the wrong words,
     only those count; otherwise the whole reply (or Moiragen's whole reason) does."""
     words, decisions = [], set()
+    for e in events:
+        if e["kind"] == "flag_removed":              # the mistaken words themselves ("that did not happen")
+            words += [plain(w) for w in e.get("wrong_words") or []]
     for c in events:
         if c["kind"] != "correction" or not c.get("corrects"):
             continue

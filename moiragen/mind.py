@@ -15,6 +15,7 @@ from .llm import think
 from .memory_log import log_event
 from .nanite import Nanite
 from .real_or_story import add_note
+from .recall import remembering
 
 # --- Energy rules (easy to tune) ---
 THINK_BASE_COST = 5        # every thought costs at least this much energy
@@ -66,12 +67,14 @@ def lessons_text(n: Nanite, how_many: int = 5) -> str:
     return f"Lessons you have learned from experience:\n{lines}\n\n"
 
 
-def build_system_prompt(n: Nanite) -> str:
+def build_system_prompt(n: Nanite, remembered: str = "") -> str:
     """The instructions the nanite sees before every thought.
 
     Notice there is no personality here: only facts about its situation.
+    remembered: for a question about the past, what it found in all its memories (recall.py).
     """
     short = n.energy < TIRED
+    memories = remembered or f"Your recent memories:\n{recent_memories_text(n)}\n"
     return (
         f"You are {n.name}, one of three small thinking nanites inside a digital being "
         f"called Moiragen. Moiragen listens to all three nanites and makes the final choice. "
@@ -80,7 +83,7 @@ def build_system_prompt(n: Nanite) -> str:
         f"Your body right now: {describe_state(n)}\n"
         f"Your feelings may show in how you answer, but only as much as you really feel them. "
         f"These numbers are for your own awareness; do not recite them. {FEELINGS_ARE_FINE}\n\n"
-        f"Your recent memories:\n{recent_memories_text(n)}\n\n"
+        f"{memories}\n"
         f"{lessons_text(n)}"
         f"Speak as yourself, in first person. When someone talks to you, reply to them "
         f"directly, not about them. Write only the words you say: no narration, no "
@@ -136,7 +139,8 @@ def speak_freshly(n: Nanite, system: str, messages: list[dict], temperature: flo
 
 def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = True,
                  decision_id: str | None = None, avoid: list[str] | None = None,
-                 remember: bool = True, note: str | None = None, task: str = "suggest") -> dict:
+                 remember: bool = True, note: str | None = None, task: str = "suggest",
+                 recall_about: str | None = None) -> dict:
     """Ask a nanite something and get its reply.
 
     message:  what is said to the nanite
@@ -149,6 +153,8 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
               instruction, e.g. "I asked Moiragen why..."
     task:     with a decision_id, the training label: "suggest" (its answer) or
               "why" (its reply when Moiragen asked "why do you think that?")
+    recall_about: the question itself, when `message` holds more than that ("The human asked
+              us..."). If it asks about the past, all its memories are searched (recall.py).
 
     Returns {"nanite", "reply", "energy_spent", "seconds", "rested", "repeated"}.
     "repeated" is True when the nanite could only repeat what was already
@@ -166,7 +172,11 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
 
     # 2. Build the prompt and think, a little warmer than its own temperature,
     #    making sure the words are new.
-    system = build_system_prompt(n)
+    #    A question about the past: first search ALL its memories (v3.0).
+    if recall_about is None and from_who not in ("self", "Moiragen"):
+        recall_about = message
+    asker = from_who if from_who.startswith("Nanite ") else "user"   # (Moiragen passes on the human's question)
+    system = build_system_prompt(n, remembering(n.name, n.memories, recall_about, asker) if recall_about else "")
     if from_who == "self":
         content = (f"(A private moment. Nobody is speaking to you.) {message}\n"
                    f"Write only the words you say out loud. If you speak to a friend, talk "

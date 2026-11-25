@@ -20,6 +20,7 @@ import operator
 import re
 
 from .memory_log import read_events
+from .training_rules import corrected_words, plain
 
 # ---------------------------------------------------------------------------
 # 1. Claims about the past
@@ -79,6 +80,24 @@ def past_claims(text: str) -> list[str]:
     return [s for s in _sentences(text) if PAST.search(s)]
 
 
+# A short summary of several memories: "I recall conversations about temperatures and calculations."
+SUMMARY = re.compile(r"\b(?:conversations?|talks?|talking|discussions?|discussing|questions?|chats?|exchanges?)\b"
+                     r"(?: with [^,.]{1,30}?)? (?:about|on|regarding|concerning|involving) (?P<topics>[^.;!?]+)", re.IGNORECASE)
+
+
+def summary_is_supported(claim: str, texts: list[str]) -> bool:
+    """v3.0: a summary is true if each thing it lists is in some memory; they need not be in
+    the same one. Each may have at most three important words, so a whole invented story
+    ("a fluctuation in power consumption after...") is never put together from scraps."""
+    found = SUMMARY.search(claim)
+    topics = [_stems(t) for t in re.split(r",|\band\b|\bor\b|&", found.group("topics"))] if found else []
+    topics = [t for t in topics if t]
+    if not topics or any(len(t) > 3 for t in topics):
+        return False
+    known = [_stems(t) for t in texts]
+    return all(any(topic <= words for words in known) for topic in topics)
+
+
 def claim_is_supported(claim: str, who: str, question: str, events: list[dict]) -> bool:
     """Is there anything in the real life log that backs this claim up?
 
@@ -86,20 +105,34 @@ def claim_is_supported(claim: str, who: str, question: str, events: list[dict]) 
     - "I was chosen before": the nanite must really have been chosen at some point.
     - any other past event: some earlier memory of this nanite must share at least
       two of the claim's important words (a loose check, so it rarely accuses wrongly).
+      Its early-life summaries count as memories too, and when the claim is itself a
+      summary, what it lists may be spread over several memories (v3.0).
     """
     decisions = [e for e in events if e.get("kind") == "decision_full"]
     if CHOSEN.search(claim):
         if SAME.search(claim) or "this" in claim.lower():
-            return any(difflib.SequenceMatcher(None, question.lower(), str(d.get("question", "")).lower()).ratio()
-                       >= 0.8 for d in decisions)
-        changed = [e for e in events if e.get("kind") == "choice_changed"]
-        return any(d.get("chosen") == who for d in decisions + changed)
+            if any(difflib.SequenceMatcher(None, question.lower(), str(d.get("question", "")).lower()).ratio()
+                   >= 0.8 for d in decisions):
+                return True
+            # "Do you remember the Australia question?": then "that answer" is the remembered one,
+            # not an answer to this question, so it is looked up like any other memory (v3.0).
+            if not ASKS_ABOUT_PAST.search(question):
+                return False
+        else:
+            changed = [e for e in events if e.get("kind") == "choice_changed"]
+            return any(d.get("chosen") == who for d in decisions + changed)
     words = _content_words(claim)
     if len(words) < 2:
         return True                      # too little to check: give the benefit of the doubt
-    # Its own earlier memories, but never the line that makes the claim (a claim cannot prove itself).
+    # Its own earlier memories (early-life summaries are among them), but never the line that
+    # makes the claim (a claim cannot prove itself).
     mine = [e for e in events if e.get("who") == who and "text" in e and claim not in str(e["text"])]
-    return any(len(words & _content_words(e["text"])) >= 2 for e in mine)
+    if any(len(words & _content_words(str(e["text"]))) >= 2 for e in mine):
+        return True
+    # Spread over several memories: only real ones count here, not words that were corrected.
+    wrong = corrected_words(events)[0] if SUMMARY.search(claim) else []
+    real = [str(e["text"]) for e in mine if e["kind"] != "correction" and not any(w in plain(str(e["text"])) for w in wrong)]
+    return summary_is_supported(claim, real)
 
 
 # --- Wider checks (v1.5): what another nanite said or did, and invented events ---

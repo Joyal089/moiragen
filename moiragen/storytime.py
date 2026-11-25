@@ -25,6 +25,7 @@ from .mind import FEELINGS_ARE_FINE, nanite_think
 from .mother import (DISMISSIVE, MADE_OF_NANITES, NOT_TO_THEM, STYLE_TALK, TO_THEM, TOWARD_MEASURING, Moiragen,
                      _found_in, _key_words, about_myself, brief)
 from .nanite import Nanite
+from .recall import FOUND, USE_THEM, remembering
 
 STOP_BELOW = 30          # stop story time if any nanite's energy is below this
 
@@ -262,6 +263,12 @@ def moiragen_says(moiragen: Moiragen, title: str, user: str, system: str = STORY
     """Moiragen answers `user` freely, as one of the group (v2.2): no verdicts, no
     health changes, the echo guard on. He remembers what he said."""
     messages = [{"role": "user", "content": user}]
+    # A free talk about the past (and not about a story): search all his memories (v3.0).
+    if not re.search(r"\bstory\b|\bpretend\b", f"{title} {user}", re.IGNORECASE):
+        memories = remembering(moiragen.name, moiragen.memories, user)
+        system = f"{system}\n\n{memories}".strip()
+        if FOUND in memories:
+            messages[0]["content"] += f"\n\n{USE_THEM}"
 
     def copied(text: str) -> list[str]:
         """His sentences that repeat a nanite's recent line or his own."""

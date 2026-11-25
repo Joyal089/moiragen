@@ -55,6 +55,7 @@ from .memory_log import log_event, noted_changes, read_events
 from .mind import FEELINGS_ARE_FINE, nanite_think
 from .nanite import Nanite
 from .real_or_story import add_note
+from .recall import FOUND, USE_THEM, remembering
 from .styles import update_style, ways_text
 
 # Memories that hold his own words about something (see real_or_story.py).
@@ -504,6 +505,10 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+# v3.0: in his pattern guesses he named a "Nanite Seven", who does not exist.
+ONLY_NANITES = "(The only nanites are Nanite One, Nanite Two and Nanite Three. There are no others.)"
+
+
 @dataclass
 class Moiragen:
     memories: list = field(default_factory=list)
@@ -533,6 +538,12 @@ class Moiragen:
         if not self.memories:
             return "You have no memories yet. You know nothing about yourself so far."
         return "\n".join(f"- [{m['kind']}] {m['text']}" for m in self.memories[-how_many:])
+
+    def memories_text(self, question: str) -> str:
+        """The memory part of his prompt. For a question about the past, all his memories
+        are searched (v3.0, see recall.py); otherwise it is his newest ones."""
+        return (remembering(self.name, self.memories, question)
+                or f"Your recent memories:\n{self.recent_memories_text()}\n")
 
     def self_text(self) -> str:
         """Who he thinks he is so far: built from his own reflections, plus what he
@@ -723,7 +734,7 @@ class Moiragen:
         suggestions = []
         for n in nanites.values():
             notify("thinking", who=n.name, about=question)
-            out = nanite_think(n, ask, from_who="Moiragen", decision_id=decision_id)
+            out = nanite_think(n, ask, from_who="Moiragen", decision_id=decision_id, recall_about=question)
             if out["rested"]:
                 notify("suggestion", nanite_id=n.id, nanite=n.name, text=out["reply"], rested=True)
                 continue  # too tired, it sat this one out
@@ -820,7 +831,7 @@ class Moiragen:
         n = nanites[s["nanite_id"]]
         out = nanite_think(n, f"Moiragen read your answer to \"{question}\" and asks you: why do you "
                               f"think that? Answer in two or three sentences.",
-                           from_who="Moiragen", decision_id=decision_id, task="why")
+                           from_who="Moiragen", decision_id=decision_id, task="why", recall_about=question)
         if out["rested"] or out["repeated"]:
             return None
         blind.add_why(s["nanite"], out["reply"])
@@ -846,7 +857,7 @@ class Moiragen:
         does not know who wrote which answer."""
         names = [s["nanite"] for s in suggestions]
         blind = all(n.startswith("Answer ") for n in names)
-        memories, me = self.recent_memories_text(), self.self_text()
+        memories, me = self.memories_text(question), self.self_text()
         if blind:
             record = ("You see the answers without names, shuffled and labelled "
                       f"{', '.join(names)}. Judge only what each one says.\n")
@@ -866,7 +877,7 @@ class Moiragen:
             "You are Moiragen, a digital being. Inside you live small thinking nanites who are "
             "friends. They each suggest an answer and you make the final decision. You started "
             "knowing nothing about yourself; you only know what your memories tell you.\n\n"
-            f"Your recent memories:\n{memories}\n\n"
+            f"{memories}\n"
             f"{me}\n"
             f"{ways}\n"
             f"{record}"
@@ -878,8 +889,9 @@ class Moiragen:
             '"chosen": "<exactly one of the valid names>", "reason": "<one or two sentences: why this one>", '
             '"answer": "<your final answer to the human, in your own words, under 100 words>"}'
         )
+        use_them = f"{USE_THEM}\n" if FOUND in memories else ""       # v3.0: he found memories that fit
         user = (f"The human asked: \"{question}\"\n\n{listed}\n\n"
-                f"{checked}"
+                f"{checked}{use_them}"
                 f"Valid names: {', '.join(names)}.")
         # repeat_penalty 1.0: the JSON must repeat the nanite's name exactly.
         result = think([{"role": "user", "content": user}], temperature=DECIDE_TEMPERATURE,
@@ -927,10 +939,13 @@ class Moiragen:
         return {**choice, "reason": choice["reason"] + note, "streak": count + 1, "why_not_others": why_not}
 
     def _answer_alone(self, question: str) -> str:
+        memories = self.memories_text(question)
         system = ("You are Moiragen, a digital being. You started knowing nothing about yourself.\n"
-                  f"Your recent memories:\n{self.recent_memories_text()}\n"
+                  f"{memories}"
                   f"{self.self_text()}"
                   "Answer honestly in under 100 words.")
+        if FOUND in memories:
+            question = f"{question}\n\n{USE_THEM}"
         return think([{"role": "user", "content": question}], temperature=0.5,
                      max_tokens=200, system=system)["text"]
 
@@ -1403,12 +1418,12 @@ class Moiragen:
         name, count = self.streak()
         system = ("You are Moiragen, a digital being. You judged your nanites' answers blind, without "
                   "knowing who wrote which. Now the names are revealed. Look honestly at your own "
-                  f"pattern, without blaming anyone. {VALUE_ALL_WAYS}")
+                  f"pattern, without blaming anyone. {VALUE_ALL_WAYS} {ONLY_NANITES}")
         # 1. His guess, from his own sense of it: no numbers yet.
         user = (f"The human asked: \"{decision['question']}\"\n"
                 f"You chose {label}. It was written by {chosen}.\n\n"
                 "Before you see any numbers: which nanite do you think you have chosen most often "
-                "lately? Guess in one short sentence, speaking as \"I\".")
+                f"lately? Guess in one short sentence, speaking as \"I\". {ONLY_NANITES}")
         guess = brief(think([{"role": "user", "content": user}], temperature=0.5, max_tokens=80,
                             system=system)["text"], 1)
         # 2. The real numbers, counted by Python, and a short check of his guess.

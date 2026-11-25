@@ -108,6 +108,8 @@ def render(e: dict) -> str | None:
         return (f"- {at} **Only what they wrote:** Moiragen was about to tell {e.get('to')} {gone}, but "
                 f"{e.get('to')} never wrote that, so it was taken out. What {e.get('to')} heard: "
                 f"\"{clean(e.get('final'))}\"")
+    if k == "flag_removed":                          # v3.0: a true memory was called made up by mistake
+        return f"- {at} **Flag removed ({who}):** \"{clean(e.get('claim'))}\" was real; the earlier correction was a mistake."
     if k == "correction":
         return f"- {at} **Correction ({who}):** {clean(e.get('text'))}"
     # v1.7: what Moiragen learned from a nanite (a calculator lesson is written inside its decision)
@@ -122,6 +124,9 @@ def render(e: dict) -> str | None:
         return f"- {at} **{who}** learned: {clean(e.get('text'))}"
     if k == "chat" and e.get("from_who") == "user":
         return f"- {at} **{who}** (direct chat): {clean(e.get('text'))}"
+    if k == "recall":                                # v3.0: a question about the past
+        what = f"found {e['found']} that fit" if e.get("found") else "found nothing about it"
+        return f"- {at} _({who} searched {e.get('searched')} memories for \"{clean(e.get('about'))}\" and {what})_"
     if k == "echo_rejected":
         return f"- {at} _(echo guard: {who} repeated a recent line and was asked for something new)_"
     if k == "echo_quiet":

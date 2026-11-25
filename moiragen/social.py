@@ -139,11 +139,14 @@ def support_friend(supporter: Nanite, friend: Nanite, rng=random) -> list[dict]:
     """supporter notices a friend feeling left out or disappointed and comforts them."""
     feeling = "left out" if friend.emotions.get("left_out", 0) >= friend.emotions.get("disappointed", 0) \
         else "disappointed"
+    shape = picker.for_support(rng)
+    # "... that you know from your memories": then it really looks in all of them (v3.0, recall.py).
+    look_back = f"What do you remember about {friend.name}?" if "from your memories" in shape else None
     words = nanite_think(
         supporter,
         f"You notice your friend {friend.name} seems {feeling}, maybe because Moiragen did "
-        f"not choose their idea. {picker.for_support(rng)} Speak to them directly.",
-        from_who="self", save=False, remember=False)
+        f"not choose their idea. {shape} Speak to them directly.",
+        from_who="self", save=False, remember=False, recall_about=look_back)
     if _silent(words):
         return []
     thanks = nanite_think(friend, words["reply"], from_who=supporter.name, save=False)
