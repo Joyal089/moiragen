@@ -140,7 +140,8 @@ def speak_freshly(n: Nanite, system: str, messages: list[dict], temperature: flo
 def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = True,
                  decision_id: str | None = None, avoid: list[str] | None = None,
                  remember: bool = True, note: str | None = None, task: str = "suggest",
-                 recall_about: str | None = None) -> dict:
+                 recall_about: str | None = None, labels: dict | None = None,
+                 context: str | None = None) -> dict:
     """Ask a nanite something and get its reply.
 
     message:  what is said to the nanite
@@ -155,6 +156,9 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
               "why" (its reply when Moiragen asked "why do you think that?")
     recall_about: the question itself, when `message` holds more than that ("The human asked
               us..."). If it asks about the past, all its memories are searched (recall.py).
+    labels:   more labels for its training example, e.g. {"turn_round": "r1a2b3c"} (v3.1)
+    context:  for the echo guard, if not the decision_id: lines with the same context are
+              not echoes of each other (v3.1: a Turn Rounds asker's own earlier questions)
 
     Returns {"nanite", "reply", "energy_spent", "seconds", "rested", "repeated"}.
     "repeated" is True when the nanite could only repeat what was already
@@ -187,7 +191,8 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
     messages = [{"role": "user", "content": content}]
     max_tokens = 80 if n.energy < TIRED else 220
     temperature = round(n.temperament["temperature"] + NANITE_TEMPERATURE_BOOST, 2)
-    reply, seconds = speak_freshly(n, system, messages, temperature, max_tokens, decision_id, avoid)
+    context = decision_id if context is None else context
+    reply, seconds = speak_freshly(n, system, messages, temperature, max_tokens, context, avoid)
     repeated = reply is None
 
     # 3. Thinking costs energy, even when nothing new came out.
@@ -209,9 +214,10 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
                 n.remember("chat", f"{from_who} said: {message} | I replied: {reply}",
                            from_who=from_who)
             add_note(n, reply, message)      # v2.6: a story told as if it were real gets a gentle note
-        record_training_example(n.name, system, messages, reply, NANITES, decision_id,
+        record_training_example(n.name, system, messages, reply, NANITES, context,
                                 temperature=temperature,
-                                **({"decision_id": decision_id, "task": task} if decision_id else {}))
+                                **({"decision_id": decision_id, "task": task} if decision_id else {}),
+                                **(labels or {}))
 
     if save:
         n.save()

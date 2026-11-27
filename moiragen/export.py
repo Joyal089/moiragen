@@ -10,6 +10,7 @@ standard chat format most fine-tuning tools accept:
 
 Labels you can filter on later (for the nightly fine-tuning):
     chosen    - for a nanite's suggestion: did Moiragen pick it?
+    turn_round - (v3.1) the id of the Turn Round it was said in; only on those lines
     feedback  - "right" / "wrong" if you marked that decision, else null. For a
                 situational question: "thoughtful", "okay", "needs_care", or
                 "harmful" if you marked it unkind, dishonest or harmful
@@ -55,8 +56,9 @@ def _decision_labels(events: list[dict]) -> tuple[dict, dict]:
 
 
 def build_examples(since: str | None = None, skip_wrong: bool = False,
-                   stats: dict | None = None) -> list[dict]:
+                   stats: dict | None = None, skip_rounds: bool = False) -> list[dict]:
     """All training examples (optionally only those on/after `since`, YYYY-MM-DD).
+    skip_rounds: leave out everything said in Turn Rounds (v3.1).
 
     stats: pass a dict to learn how many were left out, and why.
     """
@@ -87,12 +89,16 @@ def build_examples(since: str | None = None, skip_wrong: bool = False,
         fb = feedback.get(did)
         if skip_wrong and fb in ("wrong", "harmful"):
             continue
+        if skip_rounds and e.get("turn_round"):
+            continue
         messages = [{"role": "system", "content": e["system"]}] + e["messages"] + \
                    [{"role": "assistant", "content": e["reply"]}]
         record = {"messages": messages, "who": e["who"], "time": e["time"],
                   "task": e.get("task", "chat"), "decision_id": did, "feedback": fb}
         if e.get("task") == "suggest" and did in chosen:
             record["chosen"] = chosen[did] == e["who"]
+        if e.get("turn_round"):
+            record["turn_round"] = e["turn_round"]          # said in a Turn Round (v3.1)
         if rules.story_mark(e):
             record["story"] = rules.story_mark(e)          # pretend play, clearly marked as a story
         out.append(record)
@@ -124,11 +130,12 @@ def life_summary(since: str | None = None) -> dict:
     }
 
 
-def export_training(since: str | None = None, skip_wrong: bool = False) -> tuple[str, dict]:
+def export_training(since: str | None = None, skip_wrong: bool = False,
+                    skip_rounds: bool = False) -> tuple[str, dict]:
     """Write the examples to memory/exports/ and return (path, summary)."""
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     stats = {}
-    examples = build_examples(since, skip_wrong, stats)
+    examples = build_examples(since, skip_wrong, stats, skip_rounds)
     path = EXPORT_DIR / f"training-{datetime.now().strftime('%Y%m%d-%H%M%S')}.jsonl"
     with open(path, "w", encoding="utf-8") as f:
         for ex in examples:
@@ -140,6 +147,7 @@ def export_training(since: str | None = None, skip_wrong: bool = False) -> tuple
         "left_out_corrected": stats["left_out"]["corrected"],
         "left_out_pretend_play": stats["left_out"]["pretend"],
         "marked_as_story": sum("story" in ex for ex in examples),
+        "from_turn_rounds": sum("turn_round" in ex for ex in examples),
         "by_mind": dict(Counter(ex["who"] for ex in examples)),
         "by_task": dict(Counter(ex["task"] for ex in examples)),
         "marked_right": sum(ex["feedback"] == "right" for ex in examples),

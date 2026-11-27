@@ -56,6 +56,7 @@ from .stage import Stage
 from .story import story_path, write_daily_story
 from .storytime import moiragen_says, tell_story
 from .styles import describe as describe_style
+from .turnrounds import moiragen_speaks, turn_rounds
 
 # --- Tunable numbers ---
 TICK_SECONDS = 20          # pause between idle ticks
@@ -300,6 +301,16 @@ class Mind:
         """Moiragen speaks freely about a story (v2.2): no verdicts, echo guard on."""
         return self.call(self.handle_moiragen_story_talk, title, prompt, narration, timeout=timeout)
 
+    def turn_rounds(self, count: int = 4, timeout: float = 3600) -> dict:
+        """Turn Rounds (v3.1, turnrounds.py): everyone takes turns asking, answering and
+        replying, `count` rounds. No judging."""
+        return self.call(self.handle_turn_rounds, count, timeout=timeout)
+
+    def talk_to_moiragen(self, text: str, timeout: float = 300) -> dict:
+        """Talk to Moiragen himself (v3.1): he answers in his own words, without asking the
+        nanites and without judging anything."""
+        return self.call(self.handle_talk_to_moiragen, text, timeout=timeout)
+
     # The jobs themselves (always run in the mind's thread):
     def handle_chat(self, nanite_id: str, text: str) -> dict:
         n = self.nanites[nanite_id]
@@ -347,6 +358,27 @@ class Mind:
         self.emit("story_talk", who="Moiragen", round=3, text=text, story=title)
         self._vitals()
         return {"who": "Moiragen", "text": text}
+
+    def handle_turn_rounds(self, count: int) -> dict:
+        out = turn_rounds(self.moiragen, self.nanites, count, rng=self.rng, notify=self._turn_event)
+        self._vitals()
+        return out
+
+    def _turn_event(self, type_: str, **data) -> None:
+        """Send a Turn Rounds event to the viewer; the energy bars follow as they talk."""
+        self.emit(type_, **data)
+        if type_ in ("turn_answer", "turn_reply", "turn_reaction"):
+            self._vitals()
+
+    def handle_talk_to_moiragen(self, text: str) -> dict:
+        self.emit("chat", **{"from": "user", "to": "Moiragen", "text": text})
+        self.emit("thinking", who="Moiragen", about=text)
+        reply = moiragen_speaks(self.moiragen, text, task="chat", recall_about=text, situation="")
+        self.moiragen.remember("chat", f"The human said: {text} | I replied: {reply}", from_who="user")
+        self.moiragen.save()
+        self.emit("chat", **{"from": "Moiragen", "to": "user", "text": reply})
+        self._vitals()
+        return {"who": "Moiragen", "reply": reply}
 
     def handle_question(self, text: str) -> dict:
         self.emit("question", text=text)

@@ -24,6 +24,9 @@ Endpoints:
                          On "wrong", "right_nanite" (optional) names the nanite that was
                          right, so Moiragen writes what it saw that he missed.
     POST /api/story      write today's story now
+    POST /api/turnrounds {"rounds": 4}                        Turn Rounds (v3.1): everyone takes turns
+                         asking, answering and replying; no judging (moiragen/turnrounds.py)
+    POST /api/moiragen   {"text": "..."}  talk to Moiragen himself, without the nanites (v3.1)
     POST /api/active     "I'm here": the viewer sends this when you move the mouse or type
                          (at most once a minute). Without any sign of you for 10 minutes,
                          the nanites rest (see moiragen/loop.py).
@@ -68,6 +71,10 @@ class MoiragenTalkBody(BaseModel):
     title: str = ""
     prompt: str
     narration: str = ""   # shown live in the viewer before he answers
+
+
+class TurnRoundsBody(BaseModel):
+    rounds: int = 4
 
 
 class FeedbackBody(BaseModel):
@@ -184,6 +191,20 @@ def create_app(mind: Mind | None = None, start_mind: bool = True) -> FastAPI:
             raise HTTPException(400, "Empty prompt")
         return await run_job(app.state.mind.moiragen_story_talk, body.title.strip() or "A story",
                              body.prompt.strip(), body.narration.strip())
+
+    @app.post("/api/turnrounds")
+    async def turnrounds(body: TurnRoundsBody):
+        """Turn Rounds (v3.1): each round one asks and the other three answer."""
+        if not 1 <= body.rounds <= 12:
+            raise HTTPException(400, "Between 1 and 12 rounds")
+        return await run_job(app.state.mind.turn_rounds, body.rounds)
+
+    @app.post("/api/moiragen")
+    async def talk_to_moiragen(body: AskBody):
+        """Talk to Moiragen himself: he answers in his own words (v3.1)."""
+        if not body.text.strip():
+            raise HTTPException(400, "Empty message")
+        return await run_job(app.state.mind.talk_to_moiragen, body.text.strip())
 
     @app.post("/api/active")
     def active():

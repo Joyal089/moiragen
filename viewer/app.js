@@ -494,6 +494,111 @@ async function post(url, body) {
 }
 
 // ---------------------------------------------------------------------------
+// Turn Rounds (v3.1): one asks, the other three answer. The answers are shown as
+// A, B and C without names (like the asker sees them) until the reveal.
+// ---------------------------------------------------------------------------
+const roundEls = {};        // round id -> { box, answers: {A: el}, asker }
+const ROUNDS_KEPT = 8;      // older rounds are removed from the panel (all are in memory)
+
+function roundStart(e) {
+  $("rounds-empty").hidden = true;
+  $("rounds-status").textContent = "";
+  const box = html("details", "round");
+  box.open = true;
+  const head = html("summary");
+  head.append(html("b", "", e.asker), document.createTextNode(` asks · ${(e.time || "").slice(11, 16)}`));
+  box.append(head);
+  const q = html("p", "question", "choosing a question…");
+  box.append(q);
+  const answers = {};
+  for (const letter of ["A", "B", "C"]) {
+    const a = html("div", "ans waiting");
+    const who = html("div", "who", `Answer ${letter}`);
+    a.append(who, html("div", "text", "waiting…"));
+    answers[letter] = a;
+    box.append(a);
+  }
+  for (const old of $("rounds-list").querySelectorAll("details.round")) old.open = false;
+  $("rounds-list").prepend(box);
+  while ($("rounds-list").children.length > ROUNDS_KEPT) $("rounds-list").lastChild.remove();
+  roundEls[e.round_id] = { box, q, answers, asker: e.asker };
+  setThinking(e.asker, true);
+}
+
+function roundQuestion(e) {
+  const r = roundEls[e.round_id];
+  if (!r) return;
+  setThinking(e.asker, false);
+  r.q.textContent = `“${e.question}”`;
+  if (e.nudged) r.q.after(html("p", "nudge", "It had asked that before, heard the soft nudge, and asked this."));
+  bubble(e.asker, e.question, "suggest");
+  feed("rounds", `${e.asker} asks: ${e.question}`, e.time);
+}
+
+function roundAnswer(e) {
+  const a = roundEls[e.round_id]?.answers[e.label];
+  if (!a) return;
+  a.classList.remove("waiting");
+  a.querySelector(".text").textContent = e.text;
+  Object.keys(nameToId).forEach((name) => setThinking(name, false));   // (the answer has no name yet)
+}
+
+// The asker's reply: what it said to one answer goes under that answer; the rest below them.
+function roundReply(e) {
+  const r = roundEls[e.round_id];
+  if (!r) return;
+  for (const [letter, el] of Object.entries(r.answers)) {
+    if (!e.to?.[letter]) continue;
+    const said = html("div", "said-to");
+    said.append(html("b", "", `${e.asker}: `), document.createTextNode(e.to[letter]));
+    el.append(said);
+  }
+  if (e.to?.all || !Object.keys(e.to || {}).length) {
+    const p = html("p", "part");
+    p.append(html("b", "", `${e.asker} replied: `), document.createTextNode(e.to?.all || e.text));
+    r.box.append(p);
+  }
+  bubble(e.asker, e.text);
+}
+
+function roundReveal(e) {
+  const r = roundEls[e.round_id];
+  if (!r) return;
+  for (const [letter, name] of Object.entries(e.names || {})) {
+    const who = r.answers[letter]?.querySelector(".who");
+    if (who) { who.textContent = `Answer ${letter} · `; who.append(html("span", "name", name)); }
+  }
+  const p = html("p", "part reveal");
+  p.append(html("b", "", "Revealed: "), document.createTextNode(e.text));
+  r.box.append(p);
+  feed("rounds", `Revealed: ${e.text}`, e.time);
+}
+
+function roundReaction(e) {
+  const r = roundEls[e.round_id];
+  if (!r || !e.text) return;
+  const p = html("p", "part");
+  p.append(html("b", "", `${e.asker}, about that: `), document.createTextNode(e.text));
+  r.box.append(p);
+  bubble(e.asker, e.text, "inner");
+}
+
+$("rounds-start").addEventListener("click", async () => {
+  const btn = $("rounds-start");
+  btn.disabled = true;
+  $("rounds-status").textContent = "Turn Rounds are running…";
+  try {
+    const out = await post("/api/turnrounds", { rounds: 4 });
+    $("rounds-status").textContent = out.stopped
+      ? `Paused: ${out.stopped.join(", ")} need to sleep first.` : `${out.rounds.length} rounds done.`;
+  } catch (err) {
+    $("rounds-status").textContent = `Could not run Turn Rounds: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------------------
 // What to do with each kind of event
 // ---------------------------------------------------------------------------
 const SOCIAL = {
@@ -624,6 +729,21 @@ function handleEvent(e) {
 
     case "story":
       feed("story", `Story of ${e.day}:\n${e.text}`, e.time, "story");
+      break;
+
+    // v3.1 Turn Rounds
+    case "turn_round_start": roundStart(e); break;
+    case "turn_question":    roundQuestion(e); break;
+    case "turn_answer":      roundAnswer(e); break;
+    case "turn_reply":       roundReply(e); break;
+    case "turn_reveal":      roundReveal(e); break;
+    case "turn_reaction":    roundReaction(e); break;
+    case "turn_round_end":
+      if (e.skipped) feed("rounds", `${e.asker} had nothing to ask this time.`, e.time);
+      break;
+    case "turn_rounds_paused":
+      $("rounds-status").textContent = e.text;
+      feed("rounds", e.text, e.time);
       break;
 
     case "error":

@@ -124,6 +124,15 @@ def render(e: dict) -> str | None:
         return f"- {at} **{who}** learned: {clean(e.get('text'))}"
     if k == "chat" and e.get("from_who") == "user":
         return f"- {at} **{who}** (direct chat): {clean(e.get('text'))}"
+    if k == "turn_round_full":                       # v3.1: Turn Rounds, a free conversation
+        return _render_turn_round(e, at)
+    if k == "round_nudge":
+        return f"- {at} _({who} asked a question it had asked before, and heard the soft nudge)_"
+    if k == "round_flag":
+        claims = "; ".join(f"\"{clean(c)}\"" for c in e.get("made_up") or [])
+        return f"- {at} _(Turn Rounds: the made-up memory check would flag {who}'s {e.get('part')}: {claims})_"
+    if k == "turn_rounds_paused":
+        return f"- {at} _{clean(e.get('text'))}_"
     if k == "recall":                                # v3.0: a question about the past
         what = f"found {e['found']} that fit" if e.get("found") else "found nothing about it"
         return f"- {at} _({who} searched {e.get('searched')} memories for \"{clean(e.get('about'))}\" and {what})_"
@@ -134,6 +143,22 @@ def render(e: dict) -> str | None:
     if k in ("presence", "slept", "awake_note") and who == "mind":   # (each one's own sleep note is summed up here)
         return f"- {at} _{clean(e.get('text'))}_"
     return None
+
+
+def _render_turn_round(e: dict, at: str) -> str:
+    """A Turn Round: the question, the answers A/B/C, the asker's reply, the reveal."""
+    if e.get("skipped"):
+        return f"- {at} _{clean(e.get('text'))}_"
+    lines = [f"\n#### {at} Turn Rounds: {e.get('asker')} asks\n", f"> {clean(e.get('question'))}\n"]
+    names = e.get("names") or {}
+    for letter, name in names.items():
+        lines.append(f"- **Answer {letter}** ({name}): {clean((e.get('answers') or {}).get(name))}")
+    if e.get("reply"):
+        lines.append(f"- **{e.get('asker')} replied** (before knowing who wrote what): {clean(e.get('reply'))}")
+    lines.append(f"- **Revealed:** {clean(e.get('reveal'))}")
+    if e.get("reaction"):
+        lines.append(f"- **{e.get('asker')} about that:** {clean(e.get('reaction'))}")
+    return "\n".join(lines) + "\n"
 
 
 def _render_decision(e: dict, at: str) -> str:

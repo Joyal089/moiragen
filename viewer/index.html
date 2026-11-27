@@ -72,6 +72,17 @@
       </form>
     </section>
 
+    <!-- v3.1 Turn Rounds: one asks, three answer (A, B, C without names), the asker replies, then the reveal -->
+    <section class="card" id="rounds">
+      <div class="rounds-head">
+        <h2>Turn Rounds</h2>
+        <button id="rounds-start" title="Each one asks once: One, Two, Three, then Moiragen">Start 4 rounds</button>
+      </div>
+      <p class="muted" id="rounds-empty">No rounds yet. Each round, one asks and the other three answer.</p>
+      <p class="muted" id="rounds-status"></p>
+      <div id="rounds-list"></div>
+    </section>
+
     <!-- The latest decision: suggestions, choice, reason -->
     <section class="card" id="decision">
       <h2>Latest decision</h2>
