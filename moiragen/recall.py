@@ -301,7 +301,10 @@ def search(memories: list[dict], question: str, asker: str = "user", now: dateti
 
 # ---------------- 4. the memory part of the prompt ----------------
 
-BOILERPLATE = re.compile(r"\s*What answer do you suggest\? Give your best answer directly\.|^The result is known now\. "
+# v3.2: "Sleep is rest..." is a reassurance added to every sleep note. Left in, it was the only
+# part of "I slept for about 45 hours..." that was shown, and the real part was cut away.
+BOILERPLATE = re.compile(r"\s*Sleep is rest\. You always wake up with your memories safe\."
+                         r"|\s*What answer do you suggest\? Give your best answer directly\.|^The result is known now\. "
                          r"|(?<=Moiragen would like to learn from you\.) Explain to him one thing.*?(?= \| |$)", re.DOTALL)
 
 

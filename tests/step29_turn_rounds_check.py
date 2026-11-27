@@ -51,9 +51,9 @@ class Brain:
         if "It is your turn to ask" in user:
             assert self.questions.get(me), (me, user[-200:])
             text = self.questions[me].pop(0)
-        elif "Here are the three answers" in user:
+        elif "Here are their three answers" in user:
             text = "Answer A, that made me think of rain. B: I am not sure I agree. Something else came to mind too."
-        elif "Here is who wrote each answer" in user:
+        elif "Now the names are revealed" in user:
             text = "Oh, that is a surprise to me."
         else:
             rng = random.Random(self.n)
@@ -117,9 +117,9 @@ assert all(p["user"].startswith("Nanite One says: What does quiet") for p in bra
            if not p["system"].startswith("You are Moiragen")), "the answerers hear the asker"
 assert "Nanite One says: What does quiet feel like to you?" in [p["user"] for p in brain.prompts[1:4]]
 reply_prompt = brain.prompts[4]["user"]
-assert "Here are the three answers" in reply_prompt and not any(n in reply_prompt for n in r["answers"])
-assert reply_prompt.endswith("Now you can reply to the answers, in any way you like.")
-assert "Here is who wrote each answer: " + r["reveal"] in brain.prompts[5]["user"]
+assert "Here are their three answers" in reply_prompt and not any(n in reply_prompt for n in r["answers"])
+assert reply_prompt.endswith(turnrounds.BY_LETTER) and "In this round you are the asker. You asked the others: \"What does quiet" in reply_prompt
+assert "Now the names are revealed: " + r["reveal"] in brain.prompts[5]["user"]
 assert "You do not have to." in brain.prompts[5]["user"]
 kinds = [t for t, _ in events if t != "thinking"]
 assert kinds == ["turn_round_start", "turn_question", "turn_answer", "turn_answer", "turn_answer",

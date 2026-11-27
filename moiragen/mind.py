@@ -141,7 +141,7 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
                  decision_id: str | None = None, avoid: list[str] | None = None,
                  remember: bool = True, note: str | None = None, task: str = "suggest",
                  recall_about: str | None = None, labels: dict | None = None,
-                 context: str | None = None) -> dict:
+                 context: str | None = None, remembered: str | None = None, echo: bool = True) -> dict:
     """Ask a nanite something and get its reply.
 
     message:  what is said to the nanite
@@ -159,6 +159,10 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
     labels:   more labels for its training example, e.g. {"turn_round": "r1a2b3c"} (v3.1)
     context:  for the echo guard, if not the decision_id: lines with the same context are
               not echoes of each other (v3.1: a Turn Rounds asker's own earlier questions)
+    remembered: (v3.2) the memory part of its prompt, chosen by the caller (Turn Rounds gives
+              an asker a mix from its whole life); then nothing else is searched
+    echo:     False to think without the usual echo guard (v3.2, Turn Rounds has its own,
+              gentler check); a copied line still never becomes training data
 
     Returns {"nanite", "reply", "energy_spent", "seconds", "rested", "repeated"}.
     "repeated" is True when the nanite could only repeat what was already
@@ -180,7 +184,9 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
     if recall_about is None and from_who not in ("self", "Moiragen"):
         recall_about = message
     asker = from_who if from_who.startswith("Nanite ") else "user"   # (Moiragen passes on the human's question)
-    system = build_system_prompt(n, remembering(n.name, n.memories, recall_about, asker) if recall_about else "")
+    if remembered is None:
+        remembered = remembering(n.name, n.memories, recall_about, asker) if recall_about else ""
+    system = build_system_prompt(n, remembered)
     if from_who == "self":
         content = (f"(A private moment. Nobody is speaking to you.) {message}\n"
                    f"Write only the words you say out loud. If you speak to a friend, talk "
@@ -192,7 +198,11 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
     max_tokens = 80 if n.energy < TIRED else 220
     temperature = round(n.temperament["temperature"] + NANITE_TEMPERATURE_BOOST, 2)
     context = decision_id if context is None else context
-    reply, seconds = speak_freshly(n, system, messages, temperature, max_tokens, context, avoid)
+    if echo:
+        reply, seconds = speak_freshly(n, system, messages, temperature, max_tokens, context, avoid)
+    else:
+        result = think(messages, temperature=temperature, max_tokens=max_tokens, system=system)
+        reply, seconds = result["text"].strip() or None, result["seconds"]
     repeated = reply is None
 
     # 3. Thinking costs energy, even when nothing new came out.
