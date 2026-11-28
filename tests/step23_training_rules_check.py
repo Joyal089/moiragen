@@ -1,8 +1,8 @@
 """Step 23 check (v2.5): what never becomes fine-tuning data.
 
-Anything flagged as made-up, corrected, or labelled as pretend play stays out of
-the export, in the reply and in the prompt. Pretend play stays in only if the
-question clearly says it is that story.
+Anything flagged as made-up or corrected stays out of the export, in the reply and in
+the prompt. Pretend play (v3.4: in the mind's own line) stays out unless the question
+clearly says it is that story; a labelled story memory in the prompt alone is fine.
 
 Needs no Ollama: it writes a small life log in a throwaway memory folder.
 Run from the project folder:
@@ -91,7 +91,8 @@ TITLE = "The Rainy Day with Lumi"
 PLAY = f"{TITLE} (pretend play, not my real life)"
 assert base_title(PLAY + ": what the nanites noticed") == TITLE
 event("path_story", "mind", title=PLAY, part="Act 1", start=True,
-      text="Narrator: It is raining on Saturday. You play a mother, and Lumi holds up a drawing. || Moiragen: Lovely.")
+      text="Narrator: It is raining on Saturday. You play a mother, and Lumi holds up a drawing. Her hand is "
+           "brushing against the casing of the fort as she tucks it away. || Moiragen: Lovely.")
 ASK = f"Your creator (the human) says: (Story time, after the pretend story \"{TITLE}\".) What did you notice?"
 example("Nanite Three", ASK, "They stayed calm when Lumi cried, and I wondered about the fort.")     # marked: stays
 example("Nanite Two", "How many times did they say sadness?", "Four times. Once when Lumi looked up at me.")
@@ -118,18 +119,31 @@ example("Moiragen", "And then?", "The dampness still clings to everything here. 
 example("Nanite One", ASK, "The narrator was gentle, and it reminded me of The Lighthouse on Gull Island.")
 example("Nanite One", "Any labels?", "[About pretend play, not my real life] I liked playing the keeper.")
 now = exported()
-assert not any("Gull Island" in r or "heavy with salt" in r.lower() or "playing the keeper" in r or "dampness" in r for r in now), now
+assert not any("Gull Island" in r or "playing the keeper" in r or "dampness" in r for r in now), now
+assert "Heavy with salt, and a little cold." in now, "talking about a story, not as if it were real, is fine (v3.4)"
 print("[ok] A label added later covers earlier examples too, and two pretend stories are never mixed in one")
+
+# v3.4: a labelled story memory in the prompt (the whole-life mix) no longer keeps a line out.
+MIX = ("These are your own real memories:\n- 24 Nov: [Pretend play, not my real life] Story time, \"The Lighthouse "
+       "on Gull Island\": I said: The dampness still clings to everything here.\n- 25 Nov: The human said: Hello.")
+example("Nanite Three", "Now you may ask a question of your own.", "How do packets find their way home?", system=MIX)
+example("Nanite Two", "Now you may ask a question of your own.", "I remember Lumi looked up at me in the rain.",
+        system=MIX)
+now = exported()
+assert "How do packets find their way home?" in now, "its own line is not pretend play"
+assert not any("Lumi looked up" in r for r in now), "a story event told as if it were real still stays out"
+print("[ok] A story memory in its prompt is fine; its own line told as if a story were real is not (v3.4)")
 
 # ---------------- 4. The export file, its summary, and the life log ----------------
 log_before = LOG_FILE.read_bytes()
 path, summary = export_training()
 text = Path(path).read_text(encoding="utf-8")
 for never in ["phrasing felt too precise", "chosen for this before", "prioritized immediate solutions",
-              "build a rocket", "waved twice", "her hand brushing", "Gull Island"]:
+              "build a rocket", "waved twice", "her hand brushing", "playing the keeper",
+              "Lumi looked up"]:
     assert never not in text, never
 assert summary["left_out_made_up"] == 4 and summary["left_out_corrected"] == 3, summary
-assert summary["left_out_pretend_play"] == 6 and summary["marked_as_story"] == 1, summary
+assert summary["left_out_pretend_play"] == 6 and summary["marked_as_story"] == 1, summary   # 5 + "Lumi looked up"
 assert summary["examples"] == len(text.splitlines())
 assert LOG_FILE.read_bytes() == log_before, "the life log is never changed"
 print("[ok] None of it is in the export file, the summary says how many were left out and why, and the life log "

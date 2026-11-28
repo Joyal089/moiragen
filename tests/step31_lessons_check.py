@@ -6,7 +6,7 @@
   3. Choosing a question: a mix of real memories from the whole life (early life, sleep, the
      hum, the others, the human...), with dates; nothing corrected; no topics suggested.
      Each may ask up to 3, one at a time, or say "no question"; all hear each other.
-  4. The helper's answer is saved in everyone's memory, "Answered by Claude Code, Athe's helper".
+  4. The helper's answer is saved in everyone's memory, "Claude Code (Athe's helper, not a nanite) answered".
   5. Recall finds lesson facts later, and the made-up memory check treats them as real
      ("Athe taught me that..." is something it was really told).
   6. The fine-tuning export labels lesson lines ("lesson"), and --skip-lessons leaves them out.
@@ -34,7 +34,7 @@ sys.path.insert(0, str(ROOT))
 from moiragen import lessons, mind as mind_mod, turnrounds
 from moiragen.export import build_examples
 from moiragen.facts import false_past_claims
-from moiragen.lessons import HELPER, MAX_QUESTIONS, Lesson, has_no_question, lesson_memories, low_energy
+from moiragen.lessons import HELPER, MAX_QUESTIONS, SAID_BY, Lesson, has_no_question, lesson_memories, low_energy
 from moiragen.memory_log import log_event, read_events
 from moiragen.mother import Moiragen
 from moiragen.nanite import load_all
@@ -157,7 +157,7 @@ print("[ok] Each asks with a mix from its whole life in front of it (sleep, the 
 for name, x in minds.items():
     qa = [mem for mem in x.memories if mem["kind"] == "lesson_qa"]
     assert len(qa) == len(asked), name
-    assert all(mem["text"].startswith("Lesson from Athe, ") and f"Answered by {HELPER}" in mem["text"] for mem in qa)
+    assert all(mem["text"].startswith("Lesson from Athe, ") and f"{SAID_BY} answered" in mem["text"] for mem in qa)
 mine = next(mem for mem in one.memories if mem["kind"] == "lesson_qa")
 assert "I asked: \"Where is Darwin?\"" in mine["text"]
 theirs = next(mem for mem in two.memories if mem["kind"] == "lesson_qa")
@@ -166,7 +166,7 @@ assert {name: (x.health, x.mood) if hasattr(x, "mood") else (x.health,) for name
     "no judging: no health or mood changes"
 assert not any(e["kind"] in ("verdict", "decision_full", "feedback", "mistake")
                for e in read_events(last=10**6) if e.get("lesson"))
-print("[ok] Every answer is saved in all four memories as \"Answered by Claude Code, Athe's helper\"; "
+print("[ok] Every answer is saved in all four memories as \"Claude Code (Athe's helper, not a nanite) answered\"; "
       "no scores or health changes")
 
 # ---------------- 5. Recall, and lesson facts count as real ----------------

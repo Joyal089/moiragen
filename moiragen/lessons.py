@@ -19,13 +19,21 @@ A lesson starts only if every nanite has at least READY energy.
 
 Their questions, and the answers, go into the fine-tuning export with the label "lesson"
 (export.py --skip-lessons leaves them out).
+
+v3.4, after lessons 1 and 2:
+  - The helper's answers are labelled "Claude Code (Athe's helper, not a nanite)" in every
+    prompt and in new memories (Two had credited them to Nanite Three three times).
+  - A question that copies words another member just asked in this lesson is asked for
+    again, once, in its own words; whatever comes then is kept (Two once began with One's
+    question word for word). Nothing is banned. (Copying its OWN earlier openings came from
+    clipped memories, see recall.short.)
 """
 
 from datetime import datetime
 import re
 import uuid
 
-from .echo import guard as echo_guard, record_training_example
+from .echo import NANITES, EchoGuard, guard as echo_guard, record_training_example
 from .facts import false_past_claims
 from .memory_log import log_event
 from .mind import nanite_think
@@ -34,13 +42,16 @@ from .turnrounds import ORDER, life_sample, moiragen_speaks, together
 
 MAX_QUESTIONS = 3        # each member may ask up to this many questions
 READY = 70               # a lesson starts only when every nanite has more energy than this
-HELPER = "Claude Code, Athe's helper"
+HELPER = "Claude Code, Athe's helper"                 # who says it, in the life log and the export
+SAID_BY = "Claude Code (Athe's helper, not a nanite)"    # v3.4: how the minds see who answered
+OWN_WORDS = ("Some of those words were just asked by someone else in this lesson. If you have a question of "
+             "your own, ask it in your own words.")
 
 # "no question", "I have no more questions", "Nothing to ask." (with no question mark)
 NO_QUESTION = re.compile(r"^\W*(?:no(?: more| other| further)? questions?|i (?:have|don['’]t have) no(?: more)? "
                          r"questions?|i have no questions?|nothing(?: more)?(?: to ask)?(?: right now| now)?)\b",
                          re.IGNORECASE)
-ANSWERED_BY = "Answered by"
+ANSWERED_BY = "Answered by"         # (lessons 1 and 2; new memories say SAID_BY answered)
 
 
 def _day(when: str) -> str:
@@ -108,14 +119,15 @@ class Lesson:
     def heard(self) -> str:
         if not self.qa:
             return "Nobody has asked a question yet."
-        lines = [f"- {q['who']} asked: \"{q['question']}\" {HELPER} answered: \"{q['answer']}\"" for q in self.qa]
+        lines = [f"- {q['who']} asked: \"{q['question']}\"\n  {SAID_BY} answered: \"{q['answer']}\""
+                 for q in self.qa]
         return "Questions already asked after this lesson, and their answers:\n" + "\n".join(lines)
 
     def ask_prompt(self, who: str) -> str:
         left = MAX_QUESTIONS - self.asked[who]
         return (f"{self.by} (the human) shares a lesson with you, \"{self.title}\":\n\n{self.text}\n\n"
                 f"{self.heard()}\n\n"
-                f"Now you may ask a question of your own, in your own words. {HELPER} will answer it. "
+                f"Now you may ask a question of your own, in your own words. {SAID_BY} will answer it. "
                 f"You can ask {left} more question{'s' if left != 1 else ''}, one at a time. "
                 "If you have no question, write only: no question.")
 
@@ -151,9 +163,27 @@ class Lesson:
             notify("lesson_end", lesson=self.id, questions=len(self.qa))
         return {"who": None, "question": None, "number": 0, "done": True}
 
+    def copied(self, who: str, text: str) -> bool:
+        """Does it copy words another member asked in this lesson? The usual echo rules
+        (a sentence, an opener, a 5-word phrase or most of the line), against their
+        questions only; the lesson's own words may be used freely."""
+        others = EchoGuard(seed_from_log=False)
+        others.allow(self.text)
+        for q in self.qa:
+            if q["who"] != who:
+                others.add(q["who"], q["question"], NANITES)
+        return others.check(text, NANITES, speaker=who).too_similar
+
     def _speak(self, who: str, minds: dict) -> str:
+        text = self._speak_once(who, minds, self.ask_prompt(who))
+        if text and not has_no_question(text) and self.copied(who, text):
+            log_event("lesson_echo", who, lesson=self.id, text=text[:300])
+            text = self._speak_once(who, minds, f"{self.ask_prompt(who)}\n\n{OWN_WORDS}")
+        return text
+
+    def _speak_once(self, who: str, minds: dict, prompt: str) -> str:
         mind = minds[who]
-        prompt, memories = self.ask_prompt(who), lesson_memories(mind.memories, self.rng, self.id)
+        memories = lesson_memories(mind.memories, self.rng, self.id)
         labels = {"lesson": self.id}
         if who == "Moiragen":
             text = moiragen_speaks(mind, prompt, None, "lesson_question", situation="", memories=memories,
@@ -189,7 +219,7 @@ class Lesson:
         for name, mind in minds.items():
             asker = "I" if name == q["who"] else q["who"]
             mind.remember("lesson_qa", f"{self.label}, {_day(self.time)}, after \"{self.title}\": {asker} asked: "
-                                       f"\"{q['question']}\" | {ANSWERED_BY} {HELPER}: \"{text}\"",
+                                       f"\"{q['question']}\" | {SAID_BY} answered: \"{text}\"",
                           lesson=self.id, asker=q["who"], question=q["question"], answer=text,
                           answered_by=HELPER)
             mind.save()

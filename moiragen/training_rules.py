@@ -11,6 +11,11 @@ Only pretend play has an exception: it may stay in if its own question clearly s
 is that story ("(Story time, after the pretend story "..." ...)"). Made-up and corrected
 words never stay in, not even in a story.
 
+v3.4: for pretend play only the mind's OWN line counts. A labelled story memory in its
+prompt (Turn Rounds and lessons show a mix from the whole life, stories included) no
+longer keeps an example out; its line does if it is pretend play itself (labelled, now or
+later), or tells a story event as if it really happened (real_or_story.as_if_real).
+
 The life log itself is never changed: the rules are worked out from it at export time,
 so a correction or a label you add today also covers everything from before.
 """
@@ -181,7 +186,9 @@ class TrainingRules:
         return next((t for t in self.stories if plain(t) in plain(question)), None)
 
     def why_not(self, example: dict) -> str | None:
-        """"made_up", "corrected" or "pretend" if this example must be left out, else None."""
+        """"made_up", "corrected" or "pretend" if this example must be left out, else None.
+        Made-up and corrected words count anywhere in it (its prompt too); pretend play only
+        in its own line (v3.4)."""
         text = "\n".join([example["system"]] + [m["content"] for m in example["messages"]] + [example["reply"]])
         flat, reply = plain(text), plain(example["reply"])
         if any(w in flat for w in self.made_up):
@@ -189,11 +196,19 @@ class TrainingRules:
         if any(w in flat for w in self.corrected) \
                 or (example["who"], example.get("decision_id")) in self.corrected_decisions:
             return "corrected"
-        touched = self.stories_in(example, text)
-        pretend = (touched or LABEL.search(text) or any(w in flat for w in self.labelled)
-                   or any(len(reply) > 30 and reply in w for w in self.labelled))
-        # A pretend story stays in only if the question says it is that story, and no other
-        # pretend story is mixed in (in the nanite's memories, for example).
-        if pretend and (self.story_mark(example) is None or touched != {self.story_mark(example)}):
-            return "pretend"
+        # Pretend play (v3.4): only its OWN line counts. A labelled story memory somewhere in
+        # its prompt (the whole-life mix in Turn Rounds and lessons, for example) is part of
+        # its life and is clearly marked there, so it no longer keeps an example out.
+        from .real_or_story import as_if_real          # (here, because real_or_story imports this file)
+        own = example["reply"]
+        mark = self.story_mark(example)
+        if mark:
+            # A story-time question: its line may talk about that story, but not mix in another.
+            return "pretend" if self.stories_in(example, own) - {mark} else None
+        if LABEL.search(own):
+            return "pretend"                            # its line is pretend play itself
+        if any(w in reply for w in self.labelled) or any(len(reply) > 30 and reply in w for w in self.labelled):
+            return "pretend"                            # a line labelled as play later, or told as if real
+        if as_if_real(own, self.stories):
+            return "pretend"                            # a story event told as if it really happened
         return None

@@ -140,7 +140,10 @@ m.save()
 print("[ok] Moiragen gets the note for his own words, not for a nanite's words he quotes, and not during a story")
 
 # ---------------- 6. Fine-tuning data ----------------
-assert not any("Mr. Tan" in str(ex) or "brushing against" in str(ex) for ex in build_examples() if "story" not in ex)
-print("[ok] A story told as if it were real is not in the fine-tuning data")
+# v3.4: only the mind's own line counts for pretend play (a friend's reply to it may stay in).
+said = [ex["messages"][-1]["content"] for ex in build_examples() if "story" not in ex]
+assert not any("Mr. Tan" in r or "brushing against" in r for r in said), said
+assert "That sounds like a small warm lamp." in said, "the friend's own reply is fine"
+print("[ok] A story told as if it were real is not in the fine-tuning data (as the mind's own line)")
 
 print("\nStep 24 passed: stories and real life are told apart, gently, and nothing said is ever changed.")

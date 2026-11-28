@@ -324,10 +324,22 @@ def _clip(text: str, topic: set[str]) -> str:
 LESSON_ROOM = 400       # v3.3: a lesson is long; among the recent memories only its start is shown
 
 
+# v3.4: Claude Code's answers are shown as not a nanite's (old memories stay as they were).
+OLD_HELPER = re.compile(r"Answered by Claude Code, Athe's helper:|Claude Code, Athe's helper(?= said\b| answered\b)")
+SAID_BY = "Claude Code (Athe's helper, not a nanite)"
+# "Lesson from Athe, Saturday 28 November 2026, after "X": " -> "Lesson from Athe (after "X"): " (the date is
+# already at the start of the line, and the long header left room only for a question's first words)
+LESSON_HEADER = re.compile(r"^(Lesson from [^,]+), \w+day \d{1,2} \w+ \d{4}(?:, after (\"[^\"]*\"))?:")
+
+
+def relabel(text: str) -> str:
+    return OLD_HELPER.sub(lambda m: f"{SAID_BY} answered:" if m.group(0).startswith("Answered") else SAID_BY, text)
+
+
 def recent_line(memory: dict) -> str:
     """One line for the list of recent memories: "- [kind] text". A whole lesson would fill the
     prompt, so only its start is shown there (it is kept whole, and recall can find any part)."""
-    text = memory["text"]
+    text = relabel(memory["text"])
     if memory["kind"] == "lesson_heard" and len(text) > LESSON_ROOM:
         text = text[:LESSON_ROOM].rsplit(" ", 1)[0] + "… (the whole lesson is kept in my memory)"
     return f"- [{memory['kind']}] {text}"
@@ -337,12 +349,20 @@ def short(memory: dict, topic: set[str]) -> str:
     """One memory on one line: "- 24 Nov, 00:59: The human said: ..."."""
     d = datetime.fromisoformat(memory["time"])
     text = " ".join(BOILERPLATE.sub("", memory["text"]).split())
-    text = re.sub(r"\buser said:", "The human said:", text)
+    text = relabel(re.sub(r"\buser said:", "The human said:", text))     # v3.4: Claude Code is not a nanite
+    if memory["kind"] in ("lesson_heard", "lesson_qa"):                     # v3.4: a shorter header
+        text = LESSON_HEADER.sub(lambda m: f"{m.group(1)}" + (f" (after {m.group(2)})" if m.group(2) else "") + ":",
+                                 text)
     label = LABEL.match(text) and re.match(r"\[[^\]]*\]\s*", text)      # a pretend-play label always stays whole
     label = label.group(0) if label else ""
-    sides = re.split(r"\s\|\s(?=I replied:|I said:|They replied:|They did not)", text[len(label):])
+    sides = re.split(r"\s\|\s(?=I replied:|I said:|They replied:|They did not|Claude Code \()", text[len(label):])
     room = 2 * CLIP if memory["kind"] in ("early_life", "correction", "lesson_heard", "lesson_qa") else None
-    sides = [s if room and len(s) <= 2 * room else _clip(s, topic) for s in sides]
+    if memory["kind"] == "lesson_qa":
+        # v3.4: the question is shown whole (clipped to its first words it was copied as an
+        # opener: "It's… intriguing. This "copy",…"); the answer is shortened as usual.
+        sides = [sides[0] if len(sides[0]) <= 2 * room else _clip(sides[0], topic)] + [_clip(s, topic) for s in sides[1:]]
+    else:
+        sides = [s if room and len(s) <= 2 * room else _clip(s, topic) for s in sides]
     return f"- {d.day} {d:%b}, {d:%H:%M}: {label}{' | '.join(sides)}"
 
 
