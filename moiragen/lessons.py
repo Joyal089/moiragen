@@ -27,9 +27,19 @@ v3.4, after lessons 1 and 2:
     again, once, in its own words; whatever comes then is kept (Two once began with One's
     question word for word). Nothing is banned. (Copying its OWN earlier openings came from
     clipped memories, see recall.short.)
+
+v3.5, a check-up for Two and nanites answering each other:
+  - A question addressed to a member by name ("Three, explain...") is answered by that
+    member first, in its own words; then the helper adds to it or gently corrects it, or
+    says briefly that it was right. Memory: "Nanite Three answered: ..." and "Claude Code
+    (Athe's helper, not a nanite) added: ...".
+  - A member that asks a question it already asked in this lesson hears the same soft
+    nudge as in Turn Rounds, once: "You've asked that before. You can ask something new if
+    you like." Nothing more; whatever comes then is kept.
 """
 
 from datetime import datetime
+import difflib
 import re
 import uuid
 
@@ -38,7 +48,8 @@ from .facts import false_past_claims
 from .memory_log import log_event
 from .mind import nanite_think
 from .real_or_story import add_note
-from .turnrounds import ORDER, life_sample, moiragen_speaks, together
+from .training_rules import plain
+from .turnrounds import NUDGE, ORDER, SAME_QUESTION, life_sample, moiragen_speaks, together
 
 MAX_QUESTIONS = 3        # each member may ask up to this many questions
 READY = 70               # a lesson starts only when every nanite has more energy than this
@@ -51,6 +62,9 @@ OWN_WORDS = ("Some of those words were just asked by someone else in this lesson
 NO_QUESTION = re.compile(r"^\W*(?:no(?: more| other| further)? questions?|i (?:have|don['’]t have) no(?: more)? "
                          r"questions?|i have no questions?|nothing(?: more)?(?: to ask)?(?: right now| now)?)\b",
                          re.IGNORECASE)
+# v3.5: "Three, can you...", "Nanite One: could you..." at the start of a sentence
+ADDRESSED = re.compile(r"(?:^|[.!?…]\s*)[\"“‘']?(?:Nanite\s+)?(One|Two|Three|Moiragen)\s*[,:]\s",
+                       re.IGNORECASE)
 ANSWERED_BY = "Answered by"         # (lessons 1 and 2; new memories say SAID_BY answered)
 
 
@@ -61,6 +75,16 @@ def _day(when: str) -> str:
 def has_no_question(text: str) -> bool:
     """Did it say it has no question? Only if it says so and asks nothing ("?")."""
     return "?" not in text and bool(NO_QUESTION.search(text.strip().strip("\"“”")))
+
+
+def addressed_to(question: str, asker: str) -> str | None:
+    """The member a question is addressed to by name ("Three, explain..."), or None."""
+    for found in ADDRESSED.finditer(question):
+        word = found.group(1).title()
+        name = "Moiragen" if word == "Moiragen" else f"Nanite {word}"
+        if name != asker:
+            return name
+    return None
 
 
 def lesson_memories(memories: list[dict], rng=None, lesson_id: str = "") -> str:
@@ -119,8 +143,14 @@ class Lesson:
     def heard(self) -> str:
         if not self.qa:
             return "Nobody has asked a question yet."
-        lines = [f"- {q['who']} asked: \"{q['question']}\"\n  {SAID_BY} answered: \"{q['answer']}\""
-                 for q in self.qa]
+        lines = []
+        for q in self.qa:
+            lines.append(f"- {q['who']} asked: \"{q['question']}\"")
+            if q.get("member_answer"):
+                lines.append(f"  {q['member']} answered: \"{q['member_answer']}\"")
+                lines.append(f"  {SAID_BY} added: \"{q['answer']}\"")
+            else:
+                lines.append(f"  {SAID_BY} answered: \"{q['answer']}\"")
         return "Questions already asked after this lesson, and their answers:\n" + "\n".join(lines)
 
     def ask_prompt(self, who: str) -> str:
@@ -158,10 +188,46 @@ class Lesson:
             self._honesty(who, minds, text)
             if notify:
                 notify("lesson_question", lesson=self.id, **self.pending)
+            member = addressed_to(text, who)
+            if member:                                   # v3.5: the one it asked answers first
+                if notify:
+                    notify("lesson_thinking", lesson=self.id, who=member)
+                said = self.member_answers(member, who, text, minds)
+                self.pending.update(member=member, member_answer=said)
+                self._honesty(member, minds, said)
+                if notify:
+                    notify("lesson_member_answer", lesson=self.id, who=who, number=self.pending["number"],
+                           member=member, text=said)
             return {**self.pending, "done": False}
         if notify:
             notify("lesson_end", lesson=self.id, questions=len(self.qa))
         return {"who": None, "question": None, "number": 0, "done": True}
+
+    def member_answers(self, member: str, asker: str, question: str, minds: dict) -> str:
+        """A member answers a question addressed to it, in its own words (v3.5). It has the
+        lesson and everything said after it in front of it, and its own memories."""
+        mind = minds[member]
+        context = (f"Today {self.by} (the human) shared a lesson with you, \"{self.title}\":\n{self.text}\n\n"
+                   f"{self.heard()}\n\n{lesson_memories(mind.memories, self.rng, self.id)}")
+        labels = {"lesson": self.id}
+        if member == "Moiragen":
+            text = moiragen_speaks(mind, f"{asker} asks you: {question}", None, "lesson_member_answer",
+                                   situation="", memories=context, echo=False,
+                                   labels={"decision_id": self.id, **labels})
+        else:
+            text = nanite_think(mind, question, from_who=asker, remember=False, decision_id=self.id,
+                                task="lesson_member_answer", labels=labels, context=f"lesson-answers:{member}",
+                                remembered=context, echo=False)["reply"]
+        return " ".join(text.split()).strip("\"“”")
+
+    def asked_already(self, who: str, text: str) -> str | None:
+        """Its own earlier question in this lesson that this one repeats (as in Turn Rounds)."""
+        new = plain(text).strip(" ?!.")
+        for q in self.qa:
+            old = plain(q["question"]).strip(" ?!.")
+            if q["who"] == who and old and difflib.SequenceMatcher(None, new, old).ratio() >= SAME_QUESTION:
+                return q["question"]
+        return None
 
     def copied(self, who: str, text: str) -> bool:
         """Does it copy words another member asked in this lesson? The usual echo rules
@@ -176,6 +242,10 @@ class Lesson:
 
     def _speak(self, who: str, minds: dict) -> str:
         text = self._speak_once(who, minds, self.ask_prompt(who))
+        if text and not has_no_question(text) and self.asked_already(who, text):
+            # v3.5: the same soft nudge as in Turn Rounds, once; whatever comes then is kept
+            log_event("lesson_nudge", who, lesson=self.id, text=text[:300])
+            return self._speak_once(who, minds, f"{self.ask_prompt(who)}\n\nYou wrote: \"{text}\"\n{NUDGE}")
         if text and not has_no_question(text) and self.copied(who, text):
             log_event("lesson_echo", who, lesson=self.id, text=text[:300])
             text = self._speak_once(who, minds, f"{self.ask_prompt(who)}\n\n{OWN_WORDS}")
@@ -216,17 +286,27 @@ class Lesson:
         self.pending = None
         log_event("lesson_qa_full", "mind", lesson=self.id, title=self.title, by=self.by, **q,
                   answered_by=HELPER)
+        member = q.get("member") if q.get("member_answer") else None
         for name, mind in minds.items():
             asker = "I" if name == q["who"] else q["who"]
+            first = ""
+            if member:                                      # v3.5: the member it asked answered first
+                first = f" | {'I' if name == member else member} answered: \"{q['member_answer']}\""
             mind.remember("lesson_qa", f"{self.label}, {_day(self.time)}, after \"{self.title}\": {asker} asked: "
-                                       f"\"{q['question']}\" | {SAID_BY} answered: \"{text}\"",
+                                       f"\"{q['question']}\"{first} | {SAID_BY} {'added' if member else 'answered'}: "
+                                       f"\"{text}\"",
                           lesson=self.id, asker=q["who"], question=q["question"], answer=text,
-                          answered_by=HELPER)
+                          answered_by=HELPER, **({"member": member, "member_answer": q["member_answer"]}
+                                                 if member else {}))
             mind.save()
         # Labelled for the export; the helper's own words, never a mind's.
+        asked = f"{q['who']} asks: {q['question']}"
+        if member:
+            asked += f"\n{member} answered: {q['member_answer']}"
         record_training_example(HELPER, f"You are {HELPER}. You answer a question after {self.by}'s lesson "
-                                        f"\"{self.title}\", simply, kindly and honestly.",
-                                [{"role": "user", "content": f"{q['who']} asks: {q['question']}"}], text,
+                                        f"\"{self.title}\", simply, kindly and honestly"
+                                        + (", adding to or gently correcting a member's answer." if member else "."),
+                                [{"role": "user", "content": asked}], text,
                                 HELPER, self.id, task="lesson_answer", lesson=self.id)
         if notify:
             notify("lesson_answer", lesson=self.id, **q, answered_by=HELPER)

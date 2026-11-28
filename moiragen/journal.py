@@ -137,8 +137,12 @@ def render(e: dict) -> str | None:
         return (f"\n#### {at} Lesson from {e.get('by')}: \"{clean(e.get('title'))}\"\n\n"
                 f"> {clean(e.get('text'))}\n")
     if k == "lesson_qa_full":
-        return (f"- {at} **{e.get('who')} asked:** {clean(e.get('question'))}\n"
-                f"  - *{e.get('answered_by')}:* {clean(e.get('answer'))}")
+        member = (f"  - *{e.get('member')} answered:* {clean(e.get('member_answer'))}\n"
+                  if e.get("member_answer") else "")
+        return (f"- {at} **{e.get('who')} asked:** {clean(e.get('question'))}\n{member}"
+                f"  - *{e.get('answered_by')}{' added' if member else ''}:* {clean(e.get('answer'))}")
+    if k == "lesson_nudge":
+        return f"- {at} _({who} asked a question it had asked before in this lesson, and heard the soft nudge)_"
     if k == "lesson_no_question":
         more = " more" if e.get("after") else ""
         return f"- {at} _{who} had no{more} questions_"

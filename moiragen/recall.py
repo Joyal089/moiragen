@@ -355,7 +355,8 @@ def short(memory: dict, topic: set[str]) -> str:
                                  text)
     label = LABEL.match(text) and re.match(r"\[[^\]]*\]\s*", text)      # a pretend-play label always stays whole
     label = label.group(0) if label else ""
-    sides = re.split(r"\s\|\s(?=I replied:|I said:|They replied:|They did not|Claude Code \()", text[len(label):])
+    sides = re.split(r"\s\|\s(?=I replied:|I said:|They replied:|They did not|Claude Code \(|"
+                     r"(?:Nanite (?:One|Two|Three)|Moiragen|I) answered:)", text[len(label):])
     room = 2 * CLIP if memory["kind"] in ("early_life", "correction", "lesson_heard", "lesson_qa") else None
     if memory["kind"] == "lesson_qa":
         # v3.4: the question is shown whole (clipped to its first words it was copied as an

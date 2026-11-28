@@ -522,13 +522,25 @@ function lessonQuestion(e) {
   feed("lesson", `${e.who} asks: ${e.question}`, e.time);
 }
 
+function lessonMemberAnswer(e) {      // v3.5: the member it asked answers first
+  const li = lessonQs[`${e.who} #${e.number}`];
+  if (!li || li.querySelector(".m")) return;
+  const m = html("p", "a m");
+  m.append(html("b", "", `${e.member} answered:`), document.createTextNode(` ${e.text}`));
+  li.insertBefore(m, li.querySelector(".a:not(.m)"));
+  setThinking(e.member, false);
+  feed("lesson", `${e.member} answers ${e.who}: ${e.text}`, e.time);
+}
+
 function lessonAnswer(e) {
   let li = lessonQs[`${e.who} #${e.number}`];
   if (!li) { lessonQuestion(e); li = lessonQs[`${e.who} #${e.number}`]; }
-  const a = li.querySelector(".a");
+  if (e.member_answer) lessonMemberAnswer({ ...e, text: e.member_answer });
+  const a = li.querySelector(".a:not(.m)");
   a.className = "a";
-  a.replaceChildren(html("b", "", `${e.answered_by}:`), document.createTextNode(` ${e.answer}`));
-  feed("lesson", `${e.answered_by} answers ${e.who}: ${e.answer}`, e.time);
+  const verb = e.member_answer ? "added" : "answered";
+  a.replaceChildren(html("b", "", `Claude Code (Athe's helper, not a nanite) ${verb}:`), document.createTextNode(` ${e.answer}`));
+  feed("lesson", `Claude Code ${verb} for ${e.who}: ${e.answer}`, e.time);
 }
 
 function lessonNone(e) {
@@ -545,7 +557,10 @@ async function lessonLoad() {          // after a reload: the lesson so far
     lessonShow({ ...s, text: "" });
     $("lesson-words").textContent = "(the whole lesson is in everyone's memory)";
     for (const q of s.qa) lessonAnswer({ ...q, answered_by: "Claude Code, Athe's helper" });
-    if (s.pending) lessonQuestion(s.pending);
+    if (s.pending) {
+      lessonQuestion(s.pending);
+      if (s.pending.member_answer) lessonMemberAnswer({ ...s.pending, text: s.pending.member_answer });
+    }
   } catch { /* the panel just stays empty */ }
 }
 lessonLoad();
@@ -799,6 +814,7 @@ function handleEvent(e) {
       break;
     case "lesson_question":    lessonQuestion(e); break;
     case "lesson_answer":      lessonAnswer(e); break;
+    case "lesson_member_answer": lessonMemberAnswer(e); break;
     case "lesson_no_question": lessonNone(e); break;
     case "lesson_end":
       $("lesson-status").textContent = `Everyone is done asking (${e.questions} questions).`;
