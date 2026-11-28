@@ -72,6 +72,20 @@
       </form>
     </section>
 
+    <!-- v3.3 Lessons: the lesson from Athe, then each one's questions and the helper's answers, live -->
+    <section class="card" id="lessons">
+      <h2>Lessons</h2>
+      <p class="muted" id="lesson-empty">No lesson yet. When Athe shares one, it shows here with every question and answer.</p>
+      <div id="lesson-body" hidden>
+        <details class="lesson-text" open>
+          <summary><b id="lesson-title"></b> <span id="lesson-by" class="muted"></span></summary>
+          <div id="lesson-words"></div>
+        </details>
+        <p class="muted" id="lesson-status"></p>
+        <ol id="lesson-qa"></ol>
+      </div>
+    </section>
+
     <!-- v3.1 Turn Rounds: one asks, three answer (A, B, C without names), the asker replies, then the reveal -->
     <section class="card" id="rounds">
       <div class="rounds-head">

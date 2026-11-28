@@ -494,6 +494,63 @@ async function post(url, body) {
 }
 
 // ---------------------------------------------------------------------------
+// Lessons (v3.3): Athe's lesson, then each one's questions and the answers, live.
+// ---------------------------------------------------------------------------
+const lessonQs = {};        // "who #number" -> the list item of that question
+
+function lessonShow(e) {
+  $("lesson-empty").hidden = true;
+  $("lesson-body").hidden = false;
+  $("lesson-title").textContent = e.title;
+  $("lesson-by").textContent = `· from ${e.by} · ${(e.time || "").slice(0, 10)}`;
+  const words = $("lesson-words");
+  words.replaceChildren(...(e.text || "").split(/\n\s*\n/).map((para) => html("p", "", para)));
+  $("lesson-qa").replaceChildren();
+  $("lesson-status").textContent = "";
+  for (const k of Object.keys(lessonQs)) delete lessonQs[k];
+}
+
+function lessonQuestion(e) {
+  const li = html("li", "lesson-q");
+  const q = html("p", "q");
+  q.append(html("b", "", `${e.who} asks`), document.createTextNode(` (question ${e.number}): ${e.question}`));
+  li.append(q, html("p", "a waiting", "waiting for the answer…"));
+  $("lesson-qa").append(li);
+  lessonQs[`${e.who} #${e.number}`] = li;
+  $("lesson-status").textContent = "";
+  setThinking(e.who, false);
+  feed("lesson", `${e.who} asks: ${e.question}`, e.time);
+}
+
+function lessonAnswer(e) {
+  let li = lessonQs[`${e.who} #${e.number}`];
+  if (!li) { lessonQuestion(e); li = lessonQs[`${e.who} #${e.number}`]; }
+  const a = li.querySelector(".a");
+  a.className = "a";
+  a.replaceChildren(html("b", "", `${e.answered_by}:`), document.createTextNode(` ${e.answer}`));
+  feed("lesson", `${e.answered_by} answers ${e.who}: ${e.answer}`, e.time);
+}
+
+function lessonNone(e) {
+  const li = html("li", "lesson-none", `${e.who} has no${e.after ? " more" : ""} questions.`);
+  $("lesson-qa").append(li);
+  $("lesson-status").textContent = "";
+  setThinking(e.who, false);
+}
+
+async function lessonLoad() {          // after a reload: the lesson so far
+  try {
+    const s = await (await fetch("/api/lesson")).json();
+    if (!s.id) return;
+    lessonShow({ ...s, text: "" });
+    $("lesson-words").textContent = "(the whole lesson is in everyone's memory)";
+    for (const q of s.qa) lessonAnswer({ ...q, answered_by: "Claude Code, Athe's helper" });
+    if (s.pending) lessonQuestion(s.pending);
+  } catch { /* the panel just stays empty */ }
+}
+lessonLoad();
+
+// ---------------------------------------------------------------------------
 // Turn Rounds (v3.1): one asks, the other three answer. The answers are shown as
 // A, B and C without names (like the asker sees them) until the reveal.
 // ---------------------------------------------------------------------------
@@ -729,6 +786,23 @@ function handleEvent(e) {
 
     case "story":
       feed("story", `Story of ${e.day}:\n${e.text}`, e.time, "story");
+      break;
+
+    // v3.3 Lessons
+    case "lesson_start":
+      lessonShow(e);
+      feed("lesson", `${e.by} shares a lesson: "${e.title}"`, e.time);
+      break;
+    case "lesson_thinking":
+      $("lesson-status").textContent = `${e.who} is thinking about a question…`;
+      setThinking(e.who, true);
+      break;
+    case "lesson_question":    lessonQuestion(e); break;
+    case "lesson_answer":      lessonAnswer(e); break;
+    case "lesson_no_question": lessonNone(e); break;
+    case "lesson_end":
+      $("lesson-status").textContent = `Everyone is done asking (${e.questions} questions).`;
+      feed("lesson", `The questions after the lesson are done: ${e.questions} in all.`, e.time);
       break;
 
     // v3.1 Turn Rounds

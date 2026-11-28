@@ -55,7 +55,7 @@ from .memory_log import log_event, noted_changes, read_events
 from .mind import FEELINGS_ARE_FINE, nanite_think
 from .nanite import Nanite
 from .real_or_story import add_note
-from .recall import FOUND, USE_THEM, remembering
+from .recall import FOUND, USE_THEM, recent_line, remembering
 from .styles import update_style, ways_text
 
 # Memories that hold his own words about something (see real_or_story.py).
@@ -537,7 +537,7 @@ class Moiragen:
     def recent_memories_text(self, how_many: int = 8) -> str:
         if not self.memories:
             return "You have no memories yet. You know nothing about yourself so far."
-        return "\n".join(f"- [{m['kind']}] {m['text']}" for m in self.memories[-how_many:])
+        return "\n".join(recent_line(m) for m in self.memories[-how_many:])
 
     def memories_text(self, question: str) -> str:
         """The memory part of his prompt. For a question about the past, all his memories

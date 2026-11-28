@@ -56,6 +56,7 @@ from .stage import Stage
 from .story import story_path, write_daily_story
 from .storytime import moiragen_says, tell_story
 from .styles import describe as describe_style
+from .lessons import Lesson, low_energy, not_ready_text
 from .turnrounds import moiragen_speaks, turn_rounds
 
 # --- Tunable numbers ---
@@ -99,6 +100,7 @@ class Mind:
         self.rng = rng or random.Random()
         self.listeners = []
         self.inbox = queue.Queue()
+        self.lesson: Lesson | None = None      # v3.3: the lesson whose questions are going on
         self.tick_count = 0
         self.last_inner = 0.0
         self.idle_after = idle_after
@@ -311,6 +313,21 @@ class Mind:
         nanites and without judging anything."""
         return self.call(self.handle_talk_to_moiragen, text, timeout=timeout)
 
+    def start_lesson(self, title: str, text: str, by: str = "Athe", timeout: float = 300) -> dict:
+        """Lessons (v3.3, lessons.py): share a lesson, word for word, with everyone."""
+        return self.call(self.handle_start_lesson, title, text, by, timeout=timeout)
+
+    def lesson_next(self, timeout: float = 900) -> dict:
+        """The next member chooses a question after the lesson, or says it has none."""
+        return self.call(self.handle_lesson_next, timeout=timeout)
+
+    def lesson_answer(self, text: str, timeout: float = 300) -> dict:
+        """The helper's answer to the waiting question; everyone hears and remembers it."""
+        return self.call(self.handle_lesson_answer, text, timeout=timeout)
+
+    def lesson_state(self) -> dict:
+        return self.lesson.state() if self.lesson else {}
+
     # The jobs themselves (always run in the mind's thread):
     def handle_chat(self, nanite_id: str, text: str) -> dict:
         n = self.nanites[nanite_id]
@@ -369,6 +386,33 @@ class Mind:
         self.emit(type_, **data)
         if type_ in ("turn_answer", "turn_reply", "turn_reaction"):
             self._vitals()
+
+    def _minds(self) -> dict:
+        minds = {n.name: n for n in self.nanites.values()}
+        minds["Moiragen"] = self.moiragen
+        return minds
+
+    def handle_start_lesson(self, title: str, text: str, by: str) -> dict:
+        if self.lesson and not self.lesson.done:
+            raise ValueError(f"The lesson \"{self.lesson.title}\" is still going on.")
+        tired = low_energy(self.nanites)
+        if tired:
+            raise ValueError(not_ready_text(tired))
+        self.lesson = Lesson(title, text, by, rng=self.rng)
+        self.lesson.give(self._minds(), notify=self.emit)
+        return self.lesson.state()
+
+    def handle_lesson_next(self) -> dict:
+        if not self.lesson:
+            raise ValueError("There is no lesson yet.")
+        out = self.lesson.next_question(self._minds(), notify=self.emit)
+        self._vitals()
+        return out
+
+    def handle_lesson_answer(self, text: str) -> dict:
+        if not self.lesson:
+            raise ValueError("There is no lesson yet.")
+        return self.lesson.answer(text, self._minds(), notify=self.emit)
 
     def handle_talk_to_moiragen(self, text: str) -> dict:
         self.emit("chat", **{"from": "user", "to": "Moiragen", "text": text})

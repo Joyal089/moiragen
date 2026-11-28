@@ -15,7 +15,7 @@ from .llm import think
 from .memory_log import log_event
 from .nanite import Nanite
 from .real_or_story import add_note
-from .recall import remembering
+from .recall import recent_line, remembering
 
 # --- Energy rules (easy to tune) ---
 THINK_BASE_COST = 5        # every thought costs at least this much energy
@@ -55,7 +55,7 @@ def recent_memories_text(n: Nanite, how_many: int = RECENT_MEMORIES) -> str:
     """The last few things the nanite lived through, oldest first."""
     if not n.memories:
         return "You have no memories yet. This is the start of your life."
-    lines = [f"- [{m['kind']}] {m['text']}" for m in n.memories[-how_many:]]
+    lines = [recent_line(m) for m in n.memories[-how_many:]]
     return "\n".join(lines)
 
 

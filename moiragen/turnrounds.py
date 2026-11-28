@@ -175,7 +175,7 @@ IN_ROUNDS = "In Turn Rounds you are one of the group, taking turns like your nan
 
 def moiragen_speaks(m: Moiragen, message: str, round_id: str | None = None, task: str = "chat",
                     recall_about: str = "", situation: str = IN_ROUNDS, context: str | None = None,
-                    memories: str | None = None, echo: bool = True) -> str:
+                    memories: str | None = None, echo: bool = True, labels: dict | None = None) -> str:
     """Moiragen says something freely, as one of the group (in a round, or when the human
     talks to him directly). The echo guard is on (he is asked once for new words, then copied
     sentences are cut), and the line is labelled for the fine-tuning export. No verdicts are
@@ -184,7 +184,8 @@ def moiragen_speaks(m: Moiragen, message: str, round_id: str | None = None, task
     recall_about: a question about the past: then all his memories are searched (recall.py).
     context:      for the echo guard, if not the round (see ask_context).
     memories:     (v3.2) the memory part of his prompt, chosen by the caller
-    echo:         False in Turn Rounds, which has its own gentler check (v3.2)"""
+    echo:         False in Turn Rounds, which has its own gentler check (v3.2)
+    labels:       (v3.3) labels for the fine-tuning export, e.g. {"lesson": id}"""
     context = round_id if context is None else context
     if memories is None:
         memories = m.memories_text(recall_about) if recall_about else \
@@ -212,7 +213,7 @@ def moiragen_speaks(m: Moiragen, message: str, round_id: str | None = None, task
         text = " ".join(s for s in re.split(r"(?<=[.!?])\s+", text) if s not in gone).strip()
     if not text:
         return NOTHING_NEW
-    labels = {"decision_id": round_id, "turn_round": round_id} if round_id else {}
+    labels = {**({"decision_id": round_id, "turn_round": round_id} if round_id else {}), **(labels or {})}
     record_training_example("Moiragen", system, messages, text, "Moiragen", context, task=task, **labels)
     return text
 
@@ -269,10 +270,19 @@ NOT_FOR_ASKING = {"noticed", "falling_asleep", "slept", "rest", "correction", "s
                   "early_life_note"}
 
 
+HUM = re.compile(r"\bhum(?:ming|s)?\b", re.IGNORECASE)      # "the hum" they talk about (not "human")
+
+
 def part_of_life(m: dict) -> str:
     text = m.get("text", "")
     if m["kind"] == "early_life":
         return "early life"
+    if m["kind"] in ("slept", "rest", "falling_asleep"):
+        return "sleep"
+    if m["kind"] in ("lesson_heard", "lesson_qa"):
+        return "lessons"
+    if HUM.search(text):
+        return "the hum"
     if m["kind"] in ("story_time", "story", "path_story") or LABEL.search(text):
         return "stories"
     if m["kind"] == "turn_round":
@@ -284,13 +294,17 @@ def part_of_life(m: dict) -> str:
     return "thoughts"
 
 
-def life_sample(memories: list[dict], rng=random, per_part: int = PER_PART, now: datetime | None = None) -> str:
+def life_sample(memories: list[dict], rng=random, per_part: int = PER_PART, now: datetime | None = None,
+                sleep: bool = False, header: str | None = None) -> str:
     """A mix of memories from all through its life, oldest first: its first days, stories, talks
     with the others, talks with the human (greetings), Turn Rounds, its own thoughts, and the
     newest. Nothing corrected or made up is offered. (Retellings may be: they are only something
-    to ask from, and a greeting like "How did you sleep?" is one.) No topics are added."""
+    to ask from, and a greeting like "How did you sleep?" is one.) No topics are added.
+    sleep:  (v3.3) its sleep notes are part of the mix too
+    header: (v3.3) the line above the memories, instead of the usual one"""
     unreal = unreal_words()
-    real = [m for m in memories if m["kind"] not in NOT_FOR_ASKING and is_real(m, unreal)]
+    skip = NOT_FOR_ASKING - {"slept"} if sleep else NOT_FOR_ASKING
+    real = [m for m in memories if m["kind"] not in skip and is_real(m, unreal)]
     first = real[:20]                                # its first days count as early life too
     parts: dict[str, list[dict]] = {}
     for m in real[:-3]:
@@ -300,8 +314,8 @@ def life_sample(memories: list[dict], rng=random, per_part: int = PER_PART, now:
     chosen = sorted({id(m): m for m in chosen}.values(), key=lambda m: where[id(m)])     # as they were lived
     now = now or datetime.now()
     lines = "\n".join(short(m, set()) for m in chosen) or "(none yet)"
-    return (f"Today is {now:%A}, {now.day} {now:%B}.\n"
-            f"Some of your memories, from all through your life (a mix, oldest first):\n{lines}\n")
+    header = header or "Some of your memories, from all through your life (a mix, oldest first):"
+    return f"Today is {now:%A}, {now.day} {now:%B}.\n{header}\n{lines}\n"
 
 
 def answer_memories(who: str, minds: dict, question: str) -> str | None:

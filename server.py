@@ -27,6 +27,12 @@ Endpoints:
     POST /api/turnrounds {"rounds": 4}                        Turn Rounds (v3.1): everyone takes turns
                          asking, answering and replying; no judging (moiragen/turnrounds.py)
     POST /api/moiragen   {"text": "..."}  talk to Moiragen himself, without the nanites (v3.1)
+    POST /api/lesson     {"title": "...", "text": "...", "by": "Athe"}   Lessons (v3.3): share a
+                         lesson word for word with everyone (all nanites need energy above 70)
+    POST /api/lesson/next            the next member asks a question, or says it has none
+    POST /api/lesson/answer {"answer": "..."}   the helper's answer to the waiting question
+    GET  /api/lesson                 the lesson so far: questions, answers, whose question waits
+                         (teaching only: no internet, tools or network for the minds)
     POST /api/active     "I'm here": the viewer sends this when you move the mouse or type
                          (at most once a minute). Without any sign of you for 10 minutes,
                          the nanites rest (see moiragen/loop.py).
@@ -71,6 +77,16 @@ class MoiragenTalkBody(BaseModel):
     title: str = ""
     prompt: str
     narration: str = ""   # shown live in the viewer before he answers
+
+
+class LessonBody(BaseModel):
+    title: str
+    text: str
+    by: str = "Athe"
+
+
+class LessonAnswerBody(BaseModel):
+    answer: str
 
 
 class TurnRoundsBody(BaseModel):
@@ -205,6 +221,26 @@ def create_app(mind: Mind | None = None, start_mind: bool = True) -> FastAPI:
         if not body.text.strip():
             raise HTTPException(400, "Empty message")
         return await run_job(app.state.mind.talk_to_moiragen, body.text.strip())
+
+    @app.post("/api/lesson")
+    async def lesson(body: LessonBody):
+        """Lessons (v3.3): share a lesson, word for word, with all four."""
+        if not body.title.strip() or not body.text.strip():
+            raise HTTPException(400, "A lesson needs a title and its text")
+        return await run_job(app.state.mind.start_lesson, body.title.strip(), body.text.strip(),
+                             body.by.strip() or "Athe")
+
+    @app.post("/api/lesson/next")
+    async def lesson_next():
+        return await run_job(app.state.mind.lesson_next)
+
+    @app.post("/api/lesson/answer")
+    async def lesson_answer(body: LessonAnswerBody):
+        return await run_job(app.state.mind.lesson_answer, body.answer)
+
+    @app.get("/api/lesson")
+    def lesson_state():
+        return app.state.mind.lesson_state()
 
     @app.post("/api/active")
     def active():

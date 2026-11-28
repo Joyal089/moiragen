@@ -99,7 +99,7 @@ week night morning evening today tonight yesterday ago recent recently just now 
 past life lived please one two three nanite nanites moiragen human user anyone anybody someone somebody like feel felt
 feeling get got make made want well really still back got did does don't didn't can't know knew notice noticed kind
 most before after while during since until often always never them their there lately far yet else few own good
-what's that's it's i'm you've you're we've been born beginning start""".split()) | STOP
+what's that's it's i'm you've you're we've been born beginning start teach taught teaching""".split()) | STOP
 
 
 def _stem(word: str) -> str:
@@ -195,6 +195,7 @@ def when(question: str, memories: list[dict], now: datetime) -> tuple[tuple | No
 WORTH = {"chat": 2, "thought": 1, "decision": 3, "verdict": 3, "feedback": 3, "mistake": 2, "praised": 3, "chosen": 2,
          "not_chosen": 1, "helped": 3, "helped_by": 3, "learned_from": 3, "explained": 1, "reconsidered": 1,
          "story_time": 2, "wait_and_see": 1, "reflection": 1, "story": 2, "early_life": 3, "lesson": 2,
+         "lesson_heard": 3, "lesson_qa": 3,                     # v3.3: what the human taught, and the answers
          "restored": 1, "rebuilt": 3, "slept": 0.5}
 NEVER = {"falling_asleep", "noticed", "rest", "story_note"}       # say nothing of their own
 WITH_THE_HUMAN = re.compile(r"^user said:|\bThe human asked us:|\bThe human said\b")
@@ -320,6 +321,18 @@ def _clip(text: str, topic: set[str]) -> str:
     return ("… " if best else "") + out
 
 
+LESSON_ROOM = 400       # v3.3: a lesson is long; among the recent memories only its start is shown
+
+
+def recent_line(memory: dict) -> str:
+    """One line for the list of recent memories: "- [kind] text". A whole lesson would fill the
+    prompt, so only its start is shown there (it is kept whole, and recall can find any part)."""
+    text = memory["text"]
+    if memory["kind"] == "lesson_heard" and len(text) > LESSON_ROOM:
+        text = text[:LESSON_ROOM].rsplit(" ", 1)[0] + "… (the whole lesson is kept in my memory)"
+    return f"- [{memory['kind']}] {text}"
+
+
 def short(memory: dict, topic: set[str]) -> str:
     """One memory on one line: "- 24 Nov, 00:59: The human said: ..."."""
     d = datetime.fromisoformat(memory["time"])
@@ -328,7 +341,7 @@ def short(memory: dict, topic: set[str]) -> str:
     label = LABEL.match(text) and re.match(r"\[[^\]]*\]\s*", text)      # a pretend-play label always stays whole
     label = label.group(0) if label else ""
     sides = re.split(r"\s\|\s(?=I replied:|I said:|They replied:|They did not)", text[len(label):])
-    room = 2 * CLIP if memory["kind"] in ("early_life", "correction") else None
+    room = 2 * CLIP if memory["kind"] in ("early_life", "correction", "lesson_heard", "lesson_qa") else None
     sides = [s if room and len(s) <= 2 * room else _clip(s, topic) for s in sides]
     return f"- {d.day} {d:%b}, {d:%H:%M}: {label}{' | '.join(sides)}"
 

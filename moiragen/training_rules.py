@@ -53,7 +53,7 @@ def made_up_words(events: list[dict]) -> list[str]:
                 out += claims
         elif e["kind"] == "invented_feedback":               # words he said a nanite wrote (mother.py)
             out += e.get("removed") or []
-        elif e["kind"] in ("story_flag", "round_flag"):      # a story reflection, a Turn Round (v3.1)
+        elif e["kind"] in ("story_flag", "round_flag", "lesson_flag"):   # a story, a Turn Round, a lesson
             out += e.get("made_up") or []
         elif e["kind"] == "path_story":
             found = OLD_FLAG.search(e.get("text") or "")

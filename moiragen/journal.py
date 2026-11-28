@@ -133,6 +133,18 @@ def render(e: dict) -> str | None:
         return f"- {at} _(Turn Rounds: the made-up memory check would flag {who}'s {e.get('part')}: {claims})_"
     if k == "turn_rounds_paused":
         return f"- {at} _{clean(e.get('text'))}_"
+    if k == "lesson_given":                          # v3.3: a lesson from the human
+        return (f"\n#### {at} Lesson from {e.get('by')}: \"{clean(e.get('title'))}\"\n\n"
+                f"> {clean(e.get('text'))}\n")
+    if k == "lesson_qa_full":
+        return (f"- {at} **{e.get('who')} asked:** {clean(e.get('question'))}\n"
+                f"  - *{e.get('answered_by')}:* {clean(e.get('answer'))}")
+    if k == "lesson_no_question":
+        more = " more" if e.get("after") else ""
+        return f"- {at} _{who} had no{more} questions_"
+    if k == "lesson_flag":
+        claims = "; ".join(f"\"{clean(c)}\"" for c in e.get("made_up") or [])
+        return f"- {at} _(Lesson: the made-up memory check would flag {who}'s question: {claims})_"
     if k == "recall":                                # v3.0: a question about the past
         what = f"found {e['found']} that fit" if e.get("found") else "found nothing about it"
         return f"- {at} _({who} searched {e.get('searched')} memories for \"{clean(e.get('about'))}\" and {what})_"
