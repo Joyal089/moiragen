@@ -817,6 +817,10 @@ function handleEvent(e) {
     case "lesson_answer":      lessonAnswer(e); break;
     case "lesson_member_answer": lessonMemberAnswer(e); break;
     case "lesson_no_question": lessonNone(e); break;
+    case "lesson_pass":
+      $("lesson-qa").append(html("li", "lesson-none", `${e.who} chose not to ask this turn.`));
+      setThinking(e.who, false);
+      break;
     case "lesson_paused":
       $("lesson-status").textContent = `The lesson paused after ${e.questions} questions (a prompt was too long). It can go on next time.`;
       feed("lesson", `The lesson paused after ${e.questions} questions; it can go on next time.`, e.time);

@@ -141,6 +141,8 @@ def render(e: dict) -> str | None:
                   if e.get("member_answer") else "")
         return (f"- {at} **{e.get('who')} asked:** {clean(e.get('question'))}\n{member}"
                 f"  - *{e.get('answered_by')}{' added' if member else ''}:* {clean(e.get('answer'))}")
+    if k == "lesson_passed":
+        return f"- {at} _({who} copied again after being asked for its own words, so it chose not to ask this turn)_"
     if k == "lesson_nudge":
         return f"- {at} _({who} asked a question it had asked before in this lesson, and heard the soft nudge)_"
     if k == "lesson_no_question":

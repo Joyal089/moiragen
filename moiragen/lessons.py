@@ -46,6 +46,14 @@ v3.6, fixes after lesson 4:
   - If Ollama refuses a prompt, the member keeps its turn. A prompt longer than the
     model's context is never cut: the lesson pauses ("lesson_paused") and can be
     resumed later from the life log (Lesson.resume), with the lesson text whole.
+
+v3.7, copy checks after lesson 5:
+  - A trailing "no question" is stripped before comparing for repeats or copies.
+  - The copy check also compares with the helper's answers in the lesson (words in
+    quotation marks are quoting, not copying).
+  - Asked once for its own words, a member whose second try copies again (another
+    member, the helper or itself) passes its turn: "chose not to ask" in its memory. Both
+    attempts stay in the life log, out of memory and the export.
 """
 
 from datetime import datetime
@@ -60,7 +68,7 @@ from .llm import BrainError
 from .memory_log import log_event, read_events
 from .mind import nanite_think
 from .real_or_story import add_note
-from .training_rules import plain
+from .training_rules import QUOTED, core, plain, without_no_question
 from .turnrounds import NUDGE, ORDER, SAME_QUESTION, life_sample, moiragen_speaks, together
 
 MAX_QUESTIONS = 3        # each member may ask up to this many questions
@@ -133,6 +141,8 @@ class Lesson:
         self.pending: dict | None = None     # a question waiting for its answer
         self.qa: list[dict] = []             # {"who", "question", "answer", "number"}
         self.paused = False                  # v3.6: a prompt was too long; resume it later
+        self.passes = {name: 0 for name in ORDER}    # v3.7: turns passed after copying twice
+        self.passed: list[str] = []          # who passed, in order (shown in heard())
 
     @property
     def label(self) -> str:
@@ -170,6 +180,12 @@ class Lesson:
                 last = who
             elif e["kind"] == "lesson_no_question":
                 lesson.finished.add(e["who"])
+                last = e["who"]
+            elif e["kind"] == "lesson_passed":
+                lesson.passes[e["who"]] += 1
+                lesson.passed.append(e["who"])
+                if lesson.asked[e["who"]] + lesson.passes[e["who"]] >= MAX_QUESTIONS:
+                    lesson.finished.add(e["who"])
                 last = e["who"]
         lesson.turn = ORDER.index(last) + 1 if last else 0
         echo_guard.allow(lesson.text)
@@ -224,6 +240,7 @@ class Lesson:
                 lines.append(f"  {SAID_BY} added: \"{q['answer']}\"")
             else:
                 lines.append(f"  {SAID_BY} answered: \"{q['answer']}\"")
+        lines += [f"- {name} chose not to ask this turn." for name in self.passed]
         return "Questions already asked after this lesson, and their answers:\n" + "\n".join(lines)
 
     def ask_prompt(self, who: str) -> str:
@@ -247,12 +264,15 @@ class Lesson:
             if notify:
                 notify("lesson_thinking", lesson=self.id, who=who)
             try:
-                text = self._speak(who, minds)
+                text, passed = self._speak(who, minds)
             except BrainError as e:
                 self.turn -= 1                           # v3.6: it keeps its turn
                 if too_long(e):
                     return self.pause(who, e, notify)
                 raise
+            if passed:                                   # v3.7: copied again after being asked
+                self.pass_turn(who, passed, minds, notify)
+                continue
             if not text or has_no_question(text):
                 self.finished.add(who)
                 log_event("lesson_no_question", who, lesson=self.id, text=text,
@@ -261,7 +281,7 @@ class Lesson:
                     notify("lesson_no_question", lesson=self.id, who=who, after=self.asked[who])
                 continue
             self.asked[who] += 1
-            if self.asked[who] >= MAX_QUESTIONS:
+            if self.asked[who] + self.passes[who] >= MAX_QUESTIONS:
                 self.finished.add(who)
             self.pending = {"who": who, "question": text, "number": self.asked[who]}
             self._honesty(who, minds, text)
@@ -332,9 +352,9 @@ class Lesson:
 
     def asked_already(self, who: str, text: str) -> str | None:
         """Its own earlier question in this lesson that this one repeats (as in Turn Rounds)."""
-        new = plain(text).strip(" ?!.")
+        new = core(text)                         # v3.7: a trailing "no question" never counts
         for q in self.qa:
-            old = plain(q["question"]).strip(" ?!.")
+            old = core(q["question"])
             if q["who"] == who and old and difflib.SequenceMatcher(None, new, old).ratio() >= SAME_QUESTION:
                 return q["question"]
         return None
@@ -342,24 +362,51 @@ class Lesson:
     def copied(self, who: str, text: str) -> bool:
         """Does it copy words another member asked in this lesson? The usual echo rules
         (a sentence, an opener, a 5-word phrase or most of the line), against their
-        questions only; the lesson's own words may be used freely."""
+        questions and, since v3.7, the helper's answers; the lesson's own words may be used
+        freely, and so may words in quotation marks (quoting is not copying)."""
         others = EchoGuard(seed_from_log=False)
         others.allow(self.text)
         for q in self.qa:
             if q["who"] != who:
-                others.add(q["who"], q["question"], NANITES)
-        return others.check(text, NANITES, speaker=who).too_similar
+                others.add(q["who"], without_no_question(q["question"]), NANITES)
+            others.add(HELPER, q["answer"], NANITES)
+        mine = " ".join(QUOTED.sub(" ", without_no_question(text)).split())
+        return bool(mine) and others.check(mine, NANITES, speaker=who).too_similar
 
-    def _speak(self, who: str, minds: dict) -> str:
+    def pass_turn(self, who: str, attempts: list[str], minds: dict, notify=None) -> None:
+        """v3.7: it copied again after being asked for its own words, so it passes this turn.
+        Both attempts stay in the life log for the record (out of memory and the export)."""
+        self.passes[who] += 1
+        self.passed.append(who)
+        if self.asked[who] + self.passes[who] >= MAX_QUESTIONS:
+            self.finished.add(who)
+        log_event("lesson_passed", who, lesson=self.id, attempts=attempts, after=self.asked[who])
+        mind = minds[who]
+        mind.remember("lesson_pass", f"{self.label}, {_day(self.time)}, after \"{self.title}\": "
+                                     f"I chose not to ask this turn.", lesson=self.id)
+        mind.save()
+        if notify:
+            notify("lesson_pass", lesson=self.id, who=who)
+
+    def _speak(self, who: str, minds: dict) -> tuple[str, list[str] | None]:
+        """Its question, and None; or, when it copied again after being asked for its own
+        words, its last words and both attempts (then it passes its turn, v3.7)."""
         text = self._speak_once(who, minds, self.ask_prompt(who))
-        if text and not has_no_question(text) and self.asked_already(who, text):
-            # v3.5: the same soft nudge as in Turn Rounds, once; whatever comes then is kept
-            log_event("lesson_nudge", who, lesson=self.id, text=text[:300])
-            return self._speak_once(who, minds, f"{self.ask_prompt(who)}\n\nYou wrote: \"{text}\"\n{NUDGE}")
-        if text and not has_no_question(text) and self.copied(who, text):
-            log_event("lesson_echo", who, lesson=self.id, text=text[:300])
-            text = self._speak_once(who, minds, f"{self.ask_prompt(who)}\n\n{OWN_WORDS}")
-        return text
+        if not text or has_no_question(text):
+            return text, None
+        if self.asked_already(who, text):
+            # v3.5: the same soft nudge as in Turn Rounds, once
+            log_event("lesson_nudge", who, lesson=self.id, text=text[:300], attempt=text)
+            again = f"{self.ask_prompt(who)}\n\nYou wrote: \"{text}\"\n{NUDGE}"
+        elif self.copied(who, text):
+            log_event("lesson_echo", who, lesson=self.id, text=text[:300], attempt=text)
+            again = f"{self.ask_prompt(who)}\n\n{OWN_WORDS}"
+        else:
+            return text, None
+        second = self._speak_once(who, minds, again)
+        if second and not has_no_question(second) and (self.asked_already(who, second) or self.copied(who, second)):
+            return second, [text, second]                # v3.7: a second copy is a pass
+        return second, None
 
     def _speak_once(self, who: str, minds: dict, prompt: str) -> str:
         mind = minds[who]

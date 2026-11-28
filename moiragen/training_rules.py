@@ -42,6 +42,25 @@ def plain(text: str) -> str:
     return " ".join(text.split())
 
 
+# v3.7: "...like keys?” no question", "… No question." at the END of a line. Stripped before
+# comparing for repeats or copies, so it can never lower the likeness (the words are kept).
+NO_QUESTION_TAIL = re.compile(r"[\s\"“”‘’'.,;:!…—-]*\bno(?: more| other| further)? questions?[\s.!…\"“”‘’']*$",
+                              re.IGNORECASE)
+QUOTED = re.compile(r"[“\"][^“”\"]{1,200}[”\"]")     # words in quotation marks: quoting is not copying
+SAME_WORDS = 0.95                                       # a lesson line this alike is word for word
+
+
+def without_no_question(text: str) -> str:
+    """The line without a trailing "no question" (v3.7)."""
+    return NO_QUESTION_TAIL.sub("", text or "").strip()
+
+
+def core(text: str) -> str:
+    """A lesson line in one plain form for comparing: no trailing "no question", no outer
+    quotes or end marks."""
+    return plain(without_no_question(text)).strip(" ?!.\"'")
+
+
 def base_title(title: str) -> str:
     """'The Rainy Day (pretend play): what the nanites noticed' -> 'The Rainy Day'"""
     return re.split(r"\s*\(|: ", title or "")[0].strip()
@@ -163,6 +182,41 @@ def labelled_words(events: list[dict]) -> list[str]:
 
 # ---------------- the rule ----------------
 
+def lesson_copies(events: list[dict]) -> tuple[set, dict]:
+    """v3.7, for the export: the training examples the copy check sent back (a copy or a
+    repeat, asked again; or a second copy, a pass), as a set of id(example) for these very
+    event objects, and per lesson what was said before [(time, [core question, core answer])].
+
+    An attempt is the newest example of that member in that lesson with the same words,
+    written just before the event, so an earlier question with the same words stays in."""
+    withdrawn, said, recent = set(), {}, {}
+    sent_back = {"lesson_echo": "lesson_question", "lesson_nudge": "lesson_question",
+                 "lesson_passed": "lesson_question", "lesson_answer_nudge": "lesson_member_answer"}
+
+    def withdraw(lesson, who, task, text):
+        key = core(text)
+        for example in reversed(recent.get((lesson, who, task), [])):
+            line = core(example["reply"])
+            if id(example) not in withdrawn and (line == key or (len(key) >= 20 and line.startswith(key))):
+                withdrawn.add(id(example))
+                return
+
+    for e in events:
+        lesson = e.get("lesson")
+        if not lesson:
+            continue
+        if e["kind"] == "training_example":
+            recent.setdefault((lesson, e["who"], e.get("task")), []).append(e)
+        elif e["kind"] in ("lesson_echo", "lesson_nudge", "lesson_answer_nudge"):
+            withdraw(lesson, e["who"], sent_back[e["kind"]], e.get("attempt") or e.get("text", ""))
+        elif e["kind"] == "lesson_passed":
+            for attempt in e.get("attempts", [])[1:]:      # the first was sent back already
+                withdraw(lesson, e["who"], "lesson_question", attempt)
+        elif e["kind"] == "lesson_qa_full":
+            said.setdefault(lesson, []).append((e["time"], [core(e.get("question", "")), core(e.get("answer", ""))]))
+    return withdrawn, said
+
+
 class TrainingRules:
     """Reads the life log once; then why_not(example) says why an example must stay out."""
 
@@ -171,12 +225,34 @@ class TrainingRules:
         self.corrected, self.corrected_decisions = corrected_words(events)
         self.stories = pretend_stories(events)
         self.labelled = labelled_words(events)
+        self.withdrawn, self.lesson_said = lesson_copies(events)
 
     def stories_in(self, example: dict, text: str) -> set:
         """The pretend stories this example touches (by title or by a name from the story)."""
         return {title for title, s in self.stories.items() if example["time"] >= s["since"]
                 and (plain(title) in plain(text)
                      or any(re.search(rf"\b{n}\b", text) for n in s["names"]))}
+
+    def copied_in_lesson(self, example: dict) -> bool:
+        """v3.7: a lesson line that stays out of the export: an attempt the copy check sent
+        back (a copy or a repeat, then asked again), or a question that is word for word an
+        earlier question or answer in the same lesson."""
+        lesson = example.get("lesson")
+        if not lesson:
+            return False
+        if id(example) in self.withdrawn:              # (the same event objects the rules were built from)
+            return True
+        line = core(example["reply"])
+        if example.get("task") != "lesson_question":
+            return False
+        import difflib
+        for when, said in self.lesson_said.get(lesson, []):
+            if when < example["time"] and any(
+                    s and (difflib.SequenceMatcher(None, line, s).ratio() >= SAME_WORDS
+                           or (len(line) >= 40 and line in s))    # a long part of it, word for word
+                    for s in said):
+                return True
+        return False
 
     def story_mark(self, example: dict) -> str | None:
         """The title of the pretend story its question clearly announces, or None."""
@@ -191,6 +267,8 @@ class TrainingRules:
         in its own line (v3.4)."""
         text = "\n".join([example["system"]] + [m["content"] for m in example["messages"]] + [example["reply"]])
         flat, reply = plain(text), plain(example["reply"])
+        if self.copied_in_lesson(example):
+            return "copied"                             # v3.7: a copy inside a lesson
         if any(w in flat for w in self.made_up):
             return "made_up"
         if any(w in flat for w in self.corrected) \
