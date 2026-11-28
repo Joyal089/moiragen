@@ -494,7 +494,7 @@ async function post(url, body) {
 }
 
 // ---------------------------------------------------------------------------
-// Lessons (v3.3): Athe's lesson, then each one's questions and the answers, live.
+// Lessons (v3.3): the creator's lesson, then each one's questions and the answers, live.
 // ---------------------------------------------------------------------------
 const lessonQs = {};        // "who #number" -> the list item of that question
 
@@ -539,7 +539,8 @@ function lessonAnswer(e) {
   const a = li.querySelector(".a:not(.m)");
   a.className = "a";
   const verb = e.member_answer ? "added" : "answered";
-  a.replaceChildren(html("b", "", `Claude Code (Athe's helper, not a nanite) ${verb}:`), document.createTextNode(` ${e.answer}`));
+  const by = e.said_by || "Claude Code (the helper, not a nanite)";
+  a.replaceChildren(html("b", "", `${by} ${verb}:`), document.createTextNode(` ${e.answer}`));
   feed("lesson", `Claude Code ${verb} for ${e.who}: ${e.answer}`, e.time);
 }
 
@@ -556,7 +557,7 @@ async function lessonLoad() {          // after a reload: the lesson so far
     if (!s.id) return;
     lessonShow({ ...s, text: "" });
     $("lesson-words").textContent = "(the whole lesson is in everyone's memory)";
-    for (const q of s.qa) lessonAnswer({ ...q, answered_by: "Claude Code, Athe's helper" });
+    for (const q of s.qa) lessonAnswer({ ...q, said_by: s.said_by });
     if (s.pending) {
       lessonQuestion(s.pending);
       if (s.pending.member_answer) lessonMemberAnswer({ ...s.pending, text: s.pending.member_answer });
@@ -816,6 +817,10 @@ function handleEvent(e) {
     case "lesson_answer":      lessonAnswer(e); break;
     case "lesson_member_answer": lessonMemberAnswer(e); break;
     case "lesson_no_question": lessonNone(e); break;
+    case "lesson_paused":
+      $("lesson-status").textContent = `The lesson paused after ${e.questions} questions (a prompt was too long). It can go on next time.`;
+      feed("lesson", `The lesson paused after ${e.questions} questions; it can go on next time.`, e.time);
+      break;
     case "lesson_end":
       $("lesson-status").textContent = `Everyone is done asking (${e.questions} questions).`;
       feed("lesson", `The questions after the lesson are done: ${e.questions} in all.`, e.time);

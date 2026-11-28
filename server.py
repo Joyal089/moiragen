@@ -27,11 +27,12 @@ Endpoints:
     POST /api/turnrounds {"rounds": 4}                        Turn Rounds (v3.1): everyone takes turns
                          asking, answering and replying; no judging (moiragen/turnrounds.py)
     POST /api/moiragen   {"text": "..."}  talk to Moiragen himself, without the nanites (v3.1)
-    POST /api/lesson     {"title": "...", "text": "...", "by": "Athe"}   Lessons (v3.3): share a
+    POST /api/lesson     {"title": "...", "text": "...", "by": "<name>"}   Lessons (v3.3): share a
                          lesson word for word with everyone (all nanites need energy above 70)
     POST /api/lesson/next            the next member asks a question, or says it has none
     POST /api/lesson/answer {"answer": "..."}   the helper's answer to the waiting question
     GET  /api/lesson                 the lesson so far: questions, answers, whose question waits
+    POST /api/lesson/resume {"id": "l..."}   v3.6: go on with a paused lesson (from the life log)
                          (teaching only: no internet, tools or network for the minds)
     POST /api/active     "I'm here": the viewer sends this when you move the mouse or type
                          (at most once a minute). Without any sign of you for 10 minutes,
@@ -51,6 +52,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from moiragen.config import CREATOR
 from moiragen.drive import after_backup
 from moiragen.llm import BrainError
 from moiragen.loop import Mind
@@ -82,11 +84,15 @@ class MoiragenTalkBody(BaseModel):
 class LessonBody(BaseModel):
     title: str
     text: str
-    by: str = "Athe"
+    by: str = CREATOR
 
 
 class LessonAnswerBody(BaseModel):
     answer: str
+
+
+class LessonResumeBody(BaseModel):
+    id: str
 
 
 class TurnRoundsBody(BaseModel):
@@ -228,7 +234,7 @@ def create_app(mind: Mind | None = None, start_mind: bool = True) -> FastAPI:
         if not body.title.strip() or not body.text.strip():
             raise HTTPException(400, "A lesson needs a title and its text")
         return await run_job(app.state.mind.start_lesson, body.title.strip(), body.text.strip(),
-                             body.by.strip() or "Athe")
+                             body.by.strip() or CREATOR)
 
     @app.post("/api/lesson/next")
     async def lesson_next():
@@ -237,6 +243,10 @@ def create_app(mind: Mind | None = None, start_mind: bool = True) -> FastAPI:
     @app.post("/api/lesson/answer")
     async def lesson_answer(body: LessonAnswerBody):
         return await run_job(app.state.mind.lesson_answer, body.answer)
+
+    @app.post("/api/lesson/resume")
+    async def lesson_resume(body: LessonResumeBody):
+        return await run_job(app.state.mind.resume_lesson, body.id.strip())
 
     @app.get("/api/lesson")
     def lesson_state():

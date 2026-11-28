@@ -24,6 +24,7 @@ NANITE_DIR.mkdir(parents=True, exist_ok=True)
 # their energy slowly comes back, like a night's sleep.
 SLEEP_ENERGY_PER_HOUR = 40   # 30 -> 70 takes one hour; empty -> full takes 2.5 hours
 SLEEP_MAX_HOURS = 8          # sleep longer than this counts as 8 hours (a full night)
+SLEEP_HEALTH_PER_HOUR = 2    # v3.6: sleep slowly heals too: a full night (8 h) gives back 16 health
 
 # The three thinking nanites. ids are used for file names; display names
 # are what we show. Later each nanite will choose its own name.
@@ -137,15 +138,19 @@ class Nanite:
     def sleep(self, hours: float) -> float:
         """It slept for `hours` (the app was closed, or nobody was using it).
         Energy comes back at SLEEP_ENERGY_PER_HOUR, counting at most
-        SLEEP_MAX_HOURS, and never above full. Returns the energy gained."""
+        SLEEP_MAX_HOURS, and never above full. Health heals slowly too, at
+        SLEEP_HEALTH_PER_HOUR, up to 100 (v3.6). Returns the energy gained."""
         hours = min(max(hours, 0.0), SLEEP_MAX_HOURS)
-        before = self.energy
+        before, health_before = self.energy, self.health
         self.energy = self._clamp("energy", self.energy + hours * SLEEP_ENERGY_PER_HOUR)
+        self.health = self._clamp("health", self.health + hours * SLEEP_HEALTH_PER_HOUR)
         gained = round(self.energy - before, 2)
+        healed = round(self.health - health_before, 2)
         if hours >= 0.5:                     # a real sleep also eases tiredness
             self.emotions["tired"] = 0.0
-        if gained > 0:
-            log_event("sleep", self.name, hours=round(hours, 2), change=gained, energy=self.energy)
+        if gained > 0 or healed > 0:
+            log_event("sleep", self.name, hours=round(hours, 2), change=gained, energy=self.energy,
+                      healed=healed, health=self.health)
         return gained
 
     def hurt(self, amount: float, reason: str) -> None:

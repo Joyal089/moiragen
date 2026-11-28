@@ -2,7 +2,7 @@
 
   1. A question addressed to a member by name ("Three, could you explain...") is answered
      by that member first, in its own words; then Claude Code adds to it or corrects it.
-     Memory and the next prompts say "Nanite Three answered:" and "Claude Code (Athe's
+     Memory and the next prompts say "Nanite Three answered:" and "Claude Code (Rowan's
      helper, not a nanite) added:". A question to nobody by name is answered as before.
   2. A member that asks a question it already asked in this lesson hears the same soft
      nudge as in Turn Rounds, once, and whatever it says then is kept.
@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 os.environ["MEMORY_DIR"] = tempfile.mkdtemp(prefix="moiragen_test_")
+os.environ["CREATOR_NAME"] = "Rowan"     # a stand-in name; the real one stays in the local .env
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -104,7 +105,7 @@ for name, mind in minds.items():
     me = "I" if name == "Nanite Three" else "Nanite Three"
     assert f"| {me} answered: \"A router passes packets along" in qa["text"], qa["text"]
     assert f"| {SAID_BY} added: \"That's right, Three." in qa["text"], qa["text"]
-    assert qa["member"] == "Nanite Three" and qa["answered_by"] == "Claude Code, Athe's helper"
+    assert qa["member"] == "Nanite Three" and qa["answered_by"] == "Claude Code, Rowan's helper"
     plain_qa = next(x for x in mind.memories if x["kind"] == "lesson_qa" and x.get("asker") == "Nanite Two")
     assert f"| {SAID_BY} answered: \"No, routers" in plain_qa["text"] and "added" not in plain_qa["text"]
 line = short(next(x for x in one.memories if x["kind"] == "lesson_qa" and x.get("asker") == "Nanite One"), set())
@@ -112,7 +113,7 @@ assert "Nanite Three answered:" in line and f"{SAID_BY} added:" in line, line
 later = [p for p in brain.prompts if ASKING in p["user"]][-1]["user"]
 assert "  Nanite Three answered: \"A router passes" in later and f"  {SAID_BY} added: \"That's right" in later
 print("[ok] Memory and later prompts say \"Nanite Three answered:\" and "
-      "\"Claude Code (Athe's helper, not a nanite) added:\"")
+      "\"Claude Code (Rowan's helper, not a nanite) added:\"")
 
 # The export: the member's answer is its own line; the helper's answer sees it.
 examples = [ex for ex in build_examples() if ex.get("lesson") == lesson.id]

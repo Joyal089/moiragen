@@ -27,6 +27,7 @@ import math
 import random
 import re
 
+from .config import CREATOR
 from .facts import STOP, situational
 from .memory_log import log_event, read_events
 from .training_rules import LABEL, STORY_MARK, corrected_words, made_up_words, plain
@@ -325,9 +326,11 @@ LESSON_ROOM = 400       # v3.3: a lesson is long; among the recent memories only
 
 
 # v3.4: Claude Code's answers are shown as not a nanite's (old memories stay as they were).
-OLD_HELPER = re.compile(r"Answered by Claude Code, Athe's helper:|Claude Code, Athe's helper(?= said\b| answered\b)")
-SAID_BY = "Claude Code (Athe's helper, not a nanite)"
-# "Lesson from Athe, Saturday 28 November 2026, after "X": " -> "Lesson from Athe (after "X"): " (the date is
+# Old lines say "Claude Code, <name>'s helper"; matched by shape, so no name is in the code
+OLD_HELPER = re.compile(r"Answered by Claude Code, [\w .'-]{1,40}?'s helper:|"
+                        r"Claude Code, [\w .'-]{1,40}?'s helper(?= said\b| answered\b)")
+SAID_BY = f"Claude Code ({CREATOR}'s helper, not a nanite)"
+# "Lesson from <name>, Saturday 28 November 2026, after "X": " -> "Lesson from <name> (after "X"): " (the date is
 # already at the start of the line, and the long header left room only for a question's first words)
 LESSON_HEADER = re.compile(r"^(Lesson from [^,]+), \w+day \d{1,2} \w+ \d{4}(?:, after (\"[^\"]*\"))?:")
 

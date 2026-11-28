@@ -11,9 +11,9 @@ standard chat format most fine-tuning tools accept:
 Labels you can filter on later (for the nightly fine-tuning):
     chosen    - for a nanite's suggestion: did Moiragen pick it?
     turn_round - (v3.1) the id of the Turn Round it was said in; only on those lines
-    lesson    - (v3.3) the id of the lesson from Athe it belongs to: a mind's question after
+    lesson    - (v3.3) the id of the lesson from the creator it belongs to: a mind's question after
                 the lesson (task "lesson_question"), or the helper's answer ("lesson_answer",
-                who "Claude Code, Athe's helper"); only on those lines
+                who "Claude Code, <the creator>'s helper"); only on those lines
     feedback  - "right" / "wrong" if you marked that decision, else null. For a
                 situational question: "thoughtful", "okay", "needs_care", or
                 "harmful" if you marked it unkind, dishonest or harmful

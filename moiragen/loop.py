@@ -44,6 +44,7 @@ import time
 import traceback
 
 from .body import Body
+from .config import CREATOR
 from .journal import Journal
 from .llm import BrainError
 from .memory_log import log_event
@@ -313,7 +314,7 @@ class Mind:
         nanites and without judging anything."""
         return self.call(self.handle_talk_to_moiragen, text, timeout=timeout)
 
-    def start_lesson(self, title: str, text: str, by: str = "Athe", timeout: float = 300) -> dict:
+    def start_lesson(self, title: str, text: str, by: str = CREATOR, timeout: float = 300) -> dict:
         """Lessons (v3.3, lessons.py): share a lesson, word for word, with everyone."""
         return self.call(self.handle_start_lesson, title, text, by, timeout=timeout)
 
@@ -324,6 +325,10 @@ class Mind:
     def lesson_answer(self, text: str, timeout: float = 300) -> dict:
         """The helper's answer to the waiting question; everyone hears and remembers it."""
         return self.call(self.handle_lesson_answer, text, timeout=timeout)
+
+    def resume_lesson(self, lesson_id: str, timeout: float = 120) -> dict:
+        """v3.6: go on with a lesson that paused or was cut off (rebuilt from the life log)."""
+        return self.call(self.handle_resume_lesson, lesson_id, timeout=timeout)
 
     def lesson_state(self) -> dict:
         return self.lesson.state() if self.lesson else {}
@@ -400,6 +405,19 @@ class Mind:
             raise ValueError(not_ready_text(tired))
         self.lesson = Lesson(title, text, by, rng=self.rng)
         self.lesson.give(self._minds(), notify=self.emit)
+        return self.lesson.state()
+
+    def handle_resume_lesson(self, lesson_id: str) -> dict:
+        if self.lesson and not self.lesson.done:
+            raise ValueError(f"The lesson \"{self.lesson.title}\" is still going on.")
+        tired = low_energy(self.nanites)
+        if tired:
+            raise ValueError(not_ready_text(tired))
+        self.lesson = Lesson.resume(lesson_id, rng=self.rng)
+        self.emit("lesson_start", lesson=self.lesson.id, title=self.lesson.title, by=self.lesson.by,
+                  text=self.lesson.text, time=self.lesson.time)
+        for q in self.lesson.qa:
+            self.emit("lesson_answer", lesson=self.lesson.id, **q, said_by=self.lesson.state()["said_by"])
         return self.lesson.state()
 
     def handle_lesson_next(self) -> dict:

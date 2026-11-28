@@ -233,7 +233,8 @@ def _say_once(who: str, minds: dict, message: str, round_id: str, task: str, fro
                                memories=remembered, echo=False)
     out = nanite_think(minds[who], message, from_who=from_who, remember=False, save=False,
                        decision_id=round_id, task=task, recall_about=recall_about,
-                       labels={"turn_round": round_id}, context=context, remembered=remembered, echo=False)
+                       labels={"turn_round": round_id}, context=context, remembered=remembered, echo=False,
+                       talk=True)                                   # v3.6: talking costs half
     return out["reply"]
 
 

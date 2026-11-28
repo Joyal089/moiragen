@@ -12,7 +12,7 @@ How a lesson goes:
                it (life_sample, sleep and early life included), with dates, and it hears every
                question and answer so far. Nobody suggests a topic, an example or wording.
   3. ANSWER    The human's helper (Claude Code) answers each question. The answer is saved in
-               every memory as "answered by Claude Code, Athe's helper", so they know who said it.
+               every memory as answered by Claude Code, the creator's helper, so they know who said it.
 
 No judging: no scores, no health or mood changes. Asking costs energy, as thinking always does.
 A lesson starts only if every nanite has at least READY energy.
@@ -21,7 +21,7 @@ Their questions, and the answers, go into the fine-tuning export with the label 
 (export.py --skip-lessons leaves them out).
 
 v3.4, after lessons 1 and 2:
-  - The helper's answers are labelled "Claude Code (Athe's helper, not a nanite)" in every
+  - The helper's answers are labelled "Claude Code (<creator>'s helper, not a nanite)" in every
     prompt and in new memories (Two had credited them to Nanite Three three times).
   - A question that copies words another member just asked in this lesson is asked for
     again, once, in its own words; whatever comes then is kept (Two once began with One's
@@ -32,10 +32,20 @@ v3.5, a check-up for Two and nanites answering each other:
   - A question addressed to a member by name ("Three, explain...") is answered by that
     member first, in its own words; then the helper adds to it or gently corrects it, or
     says briefly that it was right. Memory: "Nanite Three answered: ..." and "Claude Code
-    (Athe's helper, not a nanite) added: ...".
+    (<creator>'s helper, not a nanite) added: ...".
   - A member that asks a question it already asked in this lesson hears the same soft
     nudge as in Turn Rounds, once: "You've asked that before. You can ask something new if
     you like." Nothing more; whatever comes then is kept.
+
+v3.6, fixes after lesson 4:
+  - A member answers at most MAX_NAMED_ANSWERS named questions per lesson, and none while
+    its energy is below ANSWER_ENERGY; then the helper answers (and says so kindly).
+  - A member's answer that repeats its own earlier answer in this lesson is asked for once
+    more, in new words; whatever comes then is kept.
+  - Answering a named question is talking with each other, so it costs half (mind.py).
+  - If Ollama refuses a prompt, the member keeps its turn. A prompt longer than the
+    model's context is never cut: the lesson pauses ("lesson_paused") and can be
+    resumed later from the life log (Lesson.resume), with the lesson text whole.
 """
 
 from datetime import datetime
@@ -43,18 +53,23 @@ import difflib
 import re
 import uuid
 
+from .config import CREATOR
 from .echo import NANITES, EchoGuard, guard as echo_guard, record_training_example
 from .facts import false_past_claims
-from .memory_log import log_event
+from .llm import BrainError
+from .memory_log import log_event, read_events
 from .mind import nanite_think
 from .real_or_story import add_note
 from .training_rules import plain
 from .turnrounds import NUDGE, ORDER, SAME_QUESTION, life_sample, moiragen_speaks, together
 
 MAX_QUESTIONS = 3        # each member may ask up to this many questions
+MAX_NAMED_ANSWERS = 2    # v3.6: a member answers at most this many named questions per lesson
+ANSWER_ENERGY = 40       # v3.6: below this energy a member does not answer named questions
 READY = 70               # a lesson starts only when every nanite has more energy than this
-HELPER = "Claude Code, Athe's helper"                 # who says it, in the life log and the export
-SAID_BY = "Claude Code (Athe's helper, not a nanite)"    # v3.4: how the minds see who answered
+# v3.6: the creator's name comes from the local .env (config.CREATOR), never from the code
+HELPER = f"Claude Code, {CREATOR}'s helper"                 # who says it, in the life log and the export
+SAID_BY = f"Claude Code ({CREATOR}'s helper, not a nanite)"    # v3.4: how the minds see who answered
 OWN_WORDS = ("Some of those words were just asked by someone else in this lesson. If you have a question of "
              "your own, ask it in your own words.")
 
@@ -66,6 +81,12 @@ NO_QUESTION = re.compile(r"^\W*(?:no(?: more| other| further)? questions?|i (?:h
 ADDRESSED = re.compile(r"(?:^|[.!?…]\s*)[\"“‘']?(?:Nanite\s+)?(One|Two|Three|Moiragen)\s*[,:]\s",
                        re.IGNORECASE)
 ANSWERED_BY = "Answered by"         # (lessons 1 and 2; new memories say SAID_BY answered)
+NEW_WORDS = "You can answer in new words if you like."
+
+
+def too_long(error: Exception) -> bool:
+    """Did Ollama refuse the prompt because it is longer than the model's context?"""
+    return "context length" in str(error).lower()
 
 
 def _day(when: str) -> str:
@@ -100,7 +121,7 @@ def lesson_memories(memories: list[dict], rng=None, lesson_id: str = "") -> str:
 class Lesson:
     """One lesson and the questions after it. Kept by the Mind while the questions go on."""
 
-    def __init__(self, title: str, text: str, by: str = "Athe", rng=None):
+    def __init__(self, title: str, text: str, by: str = CREATOR, rng=None):
         import random
         self.id = "l" + uuid.uuid4().hex[:7]
         self.title, self.text, self.by = title, text, by
@@ -111,6 +132,7 @@ class Lesson:
         self.turn = 0                        # whose turn it is next, in ORDER
         self.pending: dict | None = None     # a question waiting for its answer
         self.qa: list[dict] = []             # {"who", "question", "answer", "number"}
+        self.paused = False                  # v3.6: a prompt was too long; resume it later
 
     @property
     def label(self) -> str:
@@ -119,11 +141,62 @@ class Lesson:
     def state(self) -> dict:
         return {"id": self.id, "title": self.title, "by": self.by, "time": self.time, "qa": self.qa,
                 "pending": self.pending, "asked": self.asked, "finished": sorted(self.finished),
-                "done": self.done}
+                "done": self.done, "paused": self.paused, "said_by": SAID_BY}
 
     @property
     def done(self) -> bool:
-        return self.pending is None and len(self.finished) == len(ORDER)
+        return self.pending is None and (self.paused or len(self.finished) == len(ORDER))
+
+    @classmethod
+    def resume(cls, lesson_id: str, rng=None) -> "Lesson":
+        """A lesson that was paused (or cut off when the app closed), rebuilt from the life
+        log: its text, the questions and answers so far, who is done, and whose turn it is.
+        It is not given again; everyone already has it in memory (v3.6)."""
+        events = [e for e in read_events(last=10**9) if e.get("lesson") == lesson_id]
+        given = next((e for e in events if e["kind"] == "lesson_given"), None)
+        if not given:
+            raise ValueError(f"No lesson {lesson_id} in the life log.")
+        lesson = cls(given["title"], given["text"], given.get("by", CREATOR), rng=rng)
+        lesson.id, lesson.time = lesson_id, given["time"]
+        last = None
+        for e in events:
+            if e["kind"] == "lesson_qa_full":
+                who = e.get("detail_who", e["who"])        # (the log keeps the asker as "detail_who")
+                keep = ("question", "number", "answer", "member", "member_answer", "member_skipped")
+                lesson.qa.append({"who": who, **{k: e[k] for k in keep if k in e}})
+                lesson.asked[who] = max(lesson.asked[who], e.get("number", 0))
+                if lesson.asked[who] >= MAX_QUESTIONS:
+                    lesson.finished.add(who)
+                last = who
+            elif e["kind"] == "lesson_no_question":
+                lesson.finished.add(e["who"])
+                last = e["who"]
+        lesson.turn = ORDER.index(last) + 1 if last else 0
+        echo_guard.allow(lesson.text)
+        log_event("lesson_resumed", "mind", lesson=lesson_id, title=lesson.title, questions=len(lesson.qa))
+        return lesson
+
+    def named_answers(self, member: str) -> int:
+        """How many named questions this member has answered in this lesson."""
+        return sum(1 for q in self.qa if q.get("member") == member and q.get("member_answer"))
+
+    def cannot_answer(self, member: str, minds: dict) -> str | None:
+        """Why a member does not answer a named question now (v3.6), or None."""
+        if self.named_answers(member) >= MAX_NAMED_ANSWERS:
+            return "answered_a_lot"
+        if getattr(minds[member], "energy", 100) < ANSWER_ENERGY:
+            return "tired"
+        return None
+
+    def pause(self, who: str, error: Exception, notify=None) -> dict:
+        """The prompt was longer than the model's context: nothing is cut; the lesson pauses
+        and can go on next time (Lesson.resume)."""
+        self.paused = True
+        log_event("lesson_paused", "mind", lesson=self.id, who=who, error=str(error)[:300],
+                  questions=len(self.qa))
+        if notify:
+            notify("lesson_paused", lesson=self.id, who=who, questions=len(self.qa))
+        return {"who": who, "question": None, "number": 0, "done": True, "paused": True}
 
     # ---------- 1. give the lesson ----------
 
@@ -173,7 +246,13 @@ class Lesson:
                 continue
             if notify:
                 notify("lesson_thinking", lesson=self.id, who=who)
-            text = self._speak(who, minds)
+            try:
+                text = self._speak(who, minds)
+            except BrainError as e:
+                self.turn -= 1                           # v3.6: it keeps its turn
+                if too_long(e):
+                    return self.pause(who, e, notify)
+                raise
             if not text or has_no_question(text):
                 self.finished.add(who)
                 log_event("lesson_no_question", who, lesson=self.id, text=text,
@@ -189,15 +268,26 @@ class Lesson:
             if notify:
                 notify("lesson_question", lesson=self.id, **self.pending)
             member = addressed_to(text, who)
-            if member:                                   # v3.5: the one it asked answers first
+            why = self.cannot_answer(member, minds) if member else None
+            if why:                                      # v3.6: the helper answers instead
+                self.pending.update(member=member, member_skipped=why)
+                log_event("lesson_member_rests", member, lesson=self.id, why=why,
+                          answered=self.named_answers(member), energy=getattr(minds[member], "energy", None))
+            elif member:                                 # v3.5: the one it asked answers first
                 if notify:
                     notify("lesson_thinking", lesson=self.id, who=member)
-                said = self.member_answers(member, who, text, minds)
-                self.pending.update(member=member, member_answer=said)
-                self._honesty(member, minds, said)
-                if notify:
-                    notify("lesson_member_answer", lesson=self.id, who=who, number=self.pending["number"],
-                           member=member, text=said)
+                try:
+                    said = self.member_answers(member, who, text, minds)
+                except BrainError as e:                  # its question still stands; the helper answers
+                    self.pending.update(member=member, member_skipped="too_long" if too_long(e) else "unavailable")
+                    log_event("lesson_member_rests", member, lesson=self.id, why=self.pending["member_skipped"],
+                              error=str(e)[:300])
+                else:
+                    self.pending.update(member=member, member_answer=said)
+                    self._honesty(member, minds, said)
+                    if notify:
+                        notify("lesson_member_answer", lesson=self.id, who=who, number=self.pending["number"],
+                               member=member, text=said)
             return {**self.pending, "done": False}
         if notify:
             notify("lesson_end", lesson=self.id, questions=len(self.qa))
@@ -206,6 +296,17 @@ class Lesson:
     def member_answers(self, member: str, asker: str, question: str, minds: dict) -> str:
         """A member answers a question addressed to it, in its own words (v3.5). It has the
         lesson and everything said after it in front of it, and its own memories."""
+        text = self._answer_once(member, asker, question, minds)
+        earlier = self.answered_already(member, text)
+        if earlier:
+            # v3.6: its own earlier answer, word for word: asked once for new words; whatever comes is kept
+            log_event("lesson_answer_nudge", member, lesson=self.id, text=text[:300])
+            text = self._answer_once(member, asker, f"{question}\n\n(You already answered with these words "
+                                                    f"earlier in this lesson: \"{earlier}\" {NEW_WORDS})",
+                                     minds)
+        return text
+
+    def _answer_once(self, member: str, asker: str, question: str, minds: dict) -> str:
         mind = minds[member]
         context = (f"Today {self.by} (the human) shared a lesson with you, \"{self.title}\":\n{self.text}\n\n"
                    f"{self.heard()}\n\n{lesson_memories(mind.memories, self.rng, self.id)}")
@@ -217,8 +318,17 @@ class Lesson:
         else:
             text = nanite_think(mind, question, from_who=asker, remember=False, decision_id=self.id,
                                 task="lesson_member_answer", labels=labels, context=f"lesson-answers:{member}",
-                                remembered=context, echo=False)["reply"]
+                                remembered=context, echo=False, talk=True)["reply"]
         return " ".join(text.split()).strip("\"“”")
+
+    def answered_already(self, member: str, text: str) -> str | None:
+        """Its own earlier answer in this lesson that this one repeats (v3.6)."""
+        new = plain(text).strip(" ?!.")
+        for q in self.qa:
+            old = plain(q.get("member_answer", "")).strip(" ?!.")
+            if q.get("member") == member and old and difflib.SequenceMatcher(None, new, old).ratio() >= SAME_QUESTION:
+                return q["member_answer"]
+        return None
 
     def asked_already(self, who: str, text: str) -> str | None:
         """Its own earlier question in this lesson that this one repeats (as in Turn Rounds)."""
@@ -309,7 +419,7 @@ class Lesson:
                                 [{"role": "user", "content": asked}], text,
                                 HELPER, self.id, task="lesson_answer", lesson=self.id)
         if notify:
-            notify("lesson_answer", lesson=self.id, **q, answered_by=HELPER)
+            notify("lesson_answer", lesson=self.id, **q, answered_by=HELPER, said_by=SAID_BY)
         return q
 
 

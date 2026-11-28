@@ -3,7 +3,7 @@
   1. The export rule: a labelled story memory in a prompt (the whole-life mix) no longer
      keeps an example out. Only the mind's own line counts: pretend play itself, or a story
      event told as if it really happened. Made-up and corrected words still count anywhere.
-  2. Clearer labels: in every prompt Claude Code's answers say "Claude Code (Athe's helper,
+  2. Clearer labels: in every prompt Claude Code's answers say "Claude Code (Rowan's helper,
      not a nanite)", for old memories too (shown so, never rewritten), and in new memories.
   3. Stock openings: a past lesson question is shown whole in the memory mix (clipped, only
      its first words were left, and they were copied as an opener). A question that copies
@@ -23,6 +23,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 os.environ["MEMORY_DIR"] = tempfile.mkdtemp(prefix="moiragen_test_")
+os.environ["CREATOR_NAME"] = "Rowan"     # a stand-in name; the real one stays in the local .env
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -64,12 +65,12 @@ log_event("path_story", "mind", title="The Rainy Day with Lumi (pretend play, no
 three.remember("chat", "[Pretend play, not my real life] Story time, \"The Rainy Day with Lumi\": I said: Lumi's fort "
                        "was warm and dry.")
 # An old lesson memory, as lessons 1 and 2 saved it (it must never be rewritten).
-OLD = ("Lesson from Athe, Saturday 28 November 2026, after \"What the Internet Is\": I asked: \"It’s… intriguing. "
+OLD = ("Lesson from Rowan, Saturday 28 November 2026, after \"What the Internet Is\": I asked: \"It’s… intriguing. "
        "This “copy,” this waiting. If it truly isn't influencing my processes, then why bother creating it at all? "
-       "Isn't it simpler to just remember?\" | Answered by Claude Code, Athe's helper: \"You are right that "
+       "Isn't it simpler to just remember?\" | Answered by Claude Code, Rowan's helper: \"You are right that "
        "remembering is what you do every day, Three, and the backup does not change how you remember.\"")
 three.remember("lesson_qa", OLD, lesson="lold", asker="Nanite Three", question="It’s… intriguing. ...",
-               answer="You are right...", answered_by="Claude Code, Athe's helper")
+               answer="You are right...", answered_by="Claude Code, Rowan's helper")
 three.save()
 for x in minds.values():
     x.energy = 100
@@ -80,15 +81,15 @@ assert old["text"] == OLD, "old memories are never rewritten"
 line = short(old, set())
 assert f"{SAID_BY} answered:" in line and "Answered by Claude Code" not in line, line
 assert "Isn't it simpler to just remember?" in line, "the whole question, not just its first words"
-assert line.split(": ", 1)[1].startswith("Lesson from Athe (after \"What the Internet Is\"): I asked:"), line
+assert line.split(": ", 1)[1].startswith("Lesson from Rowan (after \"What the Internet Is\"): I asked:"), line
 assert "Saturday 28 November 2026" not in line, "the long header that ate the room is shorter (the date leads the line)"
 assert SAID_BY in recent_line(old)
 sample = lesson_memories(three.memories, random.Random(1))
 assert "why bother creating it at all? Isn't it simpler" in sample and "Answered by Claude Code" not in sample
 correction = {"time": "2026-11-28T13:58:25", "kind": "correction",
-              "text": "A gentle correction: Claude Code, Athe's helper said \"Only Athe can open it\"."}
+              "text": "A gentle correction: Claude Code, Rowan's helper said \"Only Rowan can open it\"."}
 assert f"{SAID_BY} said" in short(correction, set())
-print("[ok] Old lesson memories stay as they were; they are shown with \"Claude Code (Athe's helper, not a nanite)\" "
+print("[ok] Old lesson memories stay as they were; they are shown with \"Claude Code (Rowan's helper, not a nanite)\" "
       "and the whole question")
 
 # ---------------- 1, 2, 3. A lesson ----------------
@@ -118,10 +119,10 @@ print("[ok] A question copying another member's is asked for again once; its own
 asks = [p for p in brain.prompts if ASKING in p["user"]]
 heard = asks[-1]["user"]
 assert f"Nanite One asked: \"They’re saying" in heard and f"{SAID_BY} answered: \"Each packet has a number" in heard
-assert f"{SAID_BY} will answer it" in heard and "Claude Code, Athe's helper answered" not in heard
+assert f"{SAID_BY} will answer it" in heard and "Claude Code, Rowan's helper answered" not in heard
 qa = next(x for x in two.memories if x["kind"] == "lesson_qa" and x.get("lesson") == lesson.id)
 assert f"| {SAID_BY} answered: \"Each packet" in qa["text"], qa["text"]
-print("[ok] In the prompt and in new memories, Claude Code's answers say \"(Athe's helper, not a nanite)\"")
+print("[ok] In the prompt and in new memories, Claude Code's answers say \"(Rowan's helper, not a nanite)\"")
 
 # ---------------- 1. The export rule ----------------
 three_asks = next(p for p in asks if p["system"].startswith("You are Nanite Three"))

@@ -20,6 +20,7 @@ from .recall import recent_line, remembering
 # --- Energy rules (easy to tune) ---
 THINK_BASE_COST = 5        # every thought costs at least this much energy
 THINK_COST_PER_50_WORDS = 3  # longer answers cost more
+TALK_COST_SHARE = 0.5      # v3.6: talking with each other costs half (talks, Turn Rounds, named answers)
 TOO_TIRED = 8              # below this a nanite cannot think, it must rest
 TIRED = 30                 # below this it keeps answers short
 
@@ -141,7 +142,8 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
                  decision_id: str | None = None, avoid: list[str] | None = None,
                  remember: bool = True, note: str | None = None, task: str = "suggest",
                  recall_about: str | None = None, labels: dict | None = None,
-                 context: str | None = None, remembered: str | None = None, echo: bool = True) -> dict:
+                 context: str | None = None, remembered: str | None = None, echo: bool = True,
+                 talk: bool = False) -> dict:
     """Ask a nanite something and get its reply.
 
     message:  what is said to the nanite
@@ -163,6 +165,8 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
               an asker a mix from its whole life); then nothing else is searched
     echo:     False to think without the usual echo guard (v3.2, Turn Rounds has its own,
               gentler check); a copied line still never becomes training data
+    talk:     True when it is talking with the others (background talks, Turn Rounds,
+              answering a named question in a lesson): that costs TALK_COST_SHARE (v3.6)
 
     Returns {"nanite", "reply", "energy_spent", "seconds", "rested", "repeated"}.
     "repeated" is True when the nanite could only repeat what was already
@@ -206,8 +210,8 @@ def nanite_think(n: Nanite, message: str, from_who: str = "user", save: bool = T
     repeated = reply is None
 
     # 3. Thinking costs energy, even when nothing new came out.
-    cost = round(energy_cost(reply or ""), 2)
-    n.spend_energy(cost, "thinking")
+    cost = round(energy_cost(reply or "") * (TALK_COST_SHARE if talk else 1), 2)
+    n.spend_energy(cost, "talking" if talk else "thinking")
 
     # 4. Remember it and log it for fine-tuning, ONLY if it passed the echo check.
     if repeated:

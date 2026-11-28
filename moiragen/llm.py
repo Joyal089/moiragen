@@ -10,7 +10,7 @@ import time
 
 import requests
 
-from .config import OLLAMA_HOST, OLLAMA_MODEL, OLLAMA_REPEAT_LAST_N, OLLAMA_REPEAT_PENALTY
+from .config import OLLAMA_HOST, OLLAMA_MODEL, OLLAMA_NUM_CTX, OLLAMA_REPEAT_LAST_N, OLLAMA_REPEAT_PENALTY
 
 # Only one mind may use the model at a time.
 _brain_lock = threading.Lock()
@@ -76,6 +76,7 @@ def think(
             "num_predict": max_tokens,
             "repeat_penalty": OLLAMA_REPEAT_PENALTY if repeat_penalty is None else repeat_penalty,
             "repeat_last_n": OLLAMA_REPEAT_LAST_N,
+            "num_ctx": OLLAMA_NUM_CTX,          # v3.6: room for long lessons; nothing is cut
         },
         "keep_alive": "30m",  # keep the model loaded in VRAM between turns
     }

@@ -30,11 +30,20 @@ NANITE_TEMPERATURE_BOOST = float(os.getenv("NANITE_TEMPERATURE_BOOST", "0.1"))
 OLLAMA_REPEAT_PENALTY = float(os.getenv("OLLAMA_REPEAT_PENALTY", "1.15"))
 OLLAMA_REPEAT_LAST_N = int(os.getenv("OLLAMA_REPEAT_LAST_N", "-1"))
 
+# v3.6: how much text the model may read at once (tokens). Ollama's default (4096) was too
+# small for lessons; prompts are never cut. 16384 stays fully on a 6 GB GPU with flash
+# attention and a q8_0 KV cache (OLLAMA_FLASH_ATTENTION=1, OLLAMA_KV_CACHE_TYPE=q8_0).
+OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "16384"))
+
 # Memory folder. A relative path like "./memory" is taken relative to the
 # project folder, so it works no matter where you start Python from.
 _memory = Path(os.getenv("MEMORY_DIR", "./memory"))
 MEMORY_DIR = _memory if _memory.is_absolute() else (PROJECT_DIR / _memory).resolve()
 MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+
+# v3.6: the creator's name, used only in what the minds hear (lessons, prompts). It is
+# private, so it lives in the git-ignored .env, never in the code or the docs.
+CREATOR = os.getenv("CREATOR_NAME", "").strip() or "the creator"
 
 # The Moiragen folder in Google Drive, for copies of finished backups (see drive.py).
 # Not set = no copies.

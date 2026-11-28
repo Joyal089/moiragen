@@ -98,11 +98,11 @@ def talk(speaker: Nanite, listener: Nanite, topic: Topic | None = None, rng=rand
     topic = topic or picker.for_talk(speaker, listener, rng=rng)
     opening = nanite_think(
         speaker, f"You chose to talk to your friend {listener.name}. {topic.prompt}",
-        from_who="self", save=False, avoid=topic.avoid,
+        from_who="self", save=False, avoid=topic.avoid, talk=True,
         remember=False)                     # remembered below, together with the reply
     if _silent(opening):
         return []                           # nothing new to say: no talk this time
-    reply = nanite_think(listener, opening["reply"], from_who=speaker.name, save=False)
+    reply = nanite_think(listener, opening["reply"], from_who=speaker.name, save=False, talk=True)
     events = [_event("talk", **{"from": speaker.name, "to": listener.name, "text": opening["reply"],
                                 "topic": topic.about})]
     if _silent(reply):
@@ -122,7 +122,7 @@ def help_friend(helper: Nanite, patient: Nanite) -> list[dict]:
         helper,
         f"Your friend {patient.name} is hurt (health {patient.health:.0f}/100). You are "
         f"giving some of your energy to help them recover. Say a short kind sentence to them.",
-        from_who="self", save=False, remember=False)
+        from_who="self", save=False, remember=False, talk=True)
     said = "" if _silent(words) else words["reply"]   # the help counts even without new words
     helper.spend_energy(HELP_COST, f"helped {patient.name}")
     patient.heal(HELP_HEAL, helper=helper)           # patient feels grateful, likes helper more
@@ -146,10 +146,10 @@ def support_friend(supporter: Nanite, friend: Nanite, rng=random) -> list[dict]:
         supporter,
         f"You notice your friend {friend.name} seems {feeling}, maybe because Moiragen did "
         f"not choose their idea. {shape} Speak to them directly.",
-        from_who="self", save=False, remember=False, recall_about=look_back)
+        from_who="self", save=False, remember=False, recall_about=look_back, talk=True)
     if _silent(words):
         return []
-    thanks = nanite_think(friend, words["reply"], from_who=supporter.name, save=False)
+    thanks = nanite_think(friend, words["reply"], from_who=supporter.name, save=False, talk=True)
     friend.feel("disappointed", -0.15)
     friend.feel("left_out", -0.15)
     friend.feel("grateful", 0.3)

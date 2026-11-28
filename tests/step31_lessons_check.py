@@ -2,13 +2,13 @@
 
   1. A lesson waits until every nanite has rested above 70 energy.
   2. The lesson is saved, word for word, in everyone's memory with today's date, labelled
-     "Lesson from Athe". No health, mood or energy changes come with it.
+     "Lesson from Rowan". No health, mood or energy changes come with it.
   3. Choosing a question: a mix of real memories from the whole life (early life, sleep, the
      hum, the others, the human...), with dates; nothing corrected; no topics suggested.
      Each may ask up to 3, one at a time, or say "no question"; all hear each other.
-  4. The helper's answer is saved in everyone's memory, "Claude Code (Athe's helper, not a nanite) answered".
+  4. The helper's answer is saved in everyone's memory, "Claude Code (Rowan's helper, not a nanite) answered".
   5. Recall finds lesson facts later, and the made-up memory check treats them as real
-     ("Athe taught me that..." is something it was really told).
+     ("Rowan taught me that..." is something it was really told).
   6. The fine-tuning export labels lesson lines ("lesson"), and --skip-lessons leaves them out.
   7. The server (/api/lesson...) and the viewer's Lessons panel. No internet, tools or
      network calls are given to the minds.
@@ -27,6 +27,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 os.environ["MEMORY_DIR"] = tempfile.mkdtemp(prefix="moiragen_test_")
+os.environ["CREATOR_NAME"] = "Rowan"     # a stand-in name; the real one stays in the local .env
 sys.stdout.reconfigure(encoding="utf-8")
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -104,12 +105,12 @@ sent = []
 lesson.give(minds, notify=lambda kind, **d: sent.append((kind, d)))
 for name, x in minds.items():
     got = x.memories[-1]
-    assert got["kind"] == "lesson_heard" and got["lesson"] == lesson.id and got["by"] == "Athe", name
-    assert got["text"].startswith("Lesson from Athe, ") and TEXT in got["text"], "exactly as written"
+    assert got["kind"] == "lesson_heard" and got["lesson"] == lesson.id and got["by"] == "Rowan", name
+    assert got["text"].startswith("Lesson from Rowan, ") and TEXT in got["text"], "exactly as written"
     assert lesson.time[:4] in got["text"] and f"\"{TITLE}\"" in got["text"], "with today's date"
 assert sent[0][0] == "lesson_start" and sent[0][1]["text"] == TEXT
 assert {n.name: n.energy for n in nanites.values()} == energy, "hearing a lesson costs nothing"
-print("[ok] The lesson is saved word for word in all four memories, dated and labelled \"Lesson from Athe\"")
+print("[ok] The lesson is saved word for word in all four memories, dated and labelled \"Lesson from Rowan\"")
 
 # ---------------- 3. Choosing a question: the whole life, nothing suggested ----------------
 sample = lesson_memories(one.memories, random.Random(2), lesson.id)
@@ -157,7 +158,7 @@ print("[ok] Each asks with a mix from its whole life in front of it (sleep, the 
 for name, x in minds.items():
     qa = [mem for mem in x.memories if mem["kind"] == "lesson_qa"]
     assert len(qa) == len(asked), name
-    assert all(mem["text"].startswith("Lesson from Athe, ") and f"{SAID_BY} answered" in mem["text"] for mem in qa)
+    assert all(mem["text"].startswith("Lesson from Rowan, ") and f"{SAID_BY} answered" in mem["text"] for mem in qa)
 mine = next(mem for mem in one.memories if mem["kind"] == "lesson_qa")
 assert "I asked: \"Where is Darwin?\"" in mine["text"]
 theirs = next(mem for mem in two.memories if mem["kind"] == "lesson_qa")
@@ -166,22 +167,22 @@ assert {name: (x.health, x.mood) if hasattr(x, "mood") else (x.health,) for name
     "no judging: no health or mood changes"
 assert not any(e["kind"] in ("verdict", "decision_full", "feedback", "mistake")
                for e in read_events(last=10**6) if e.get("lesson"))
-print("[ok] Every answer is saved in all four memories as \"Claude Code (Athe's helper, not a nanite) answered\"; "
+print("[ok] Every answer is saved in all four memories as \"Claude Code (Rowan's helper, not a nanite) answered\"; "
       "no scores or health changes")
 
 # ---------------- 5. Recall, and lesson facts count as real ----------------
-found = remembering("Nanite Two", two.memories, "What did Athe teach you about the internet before?")
+found = remembering("Nanite Two", two.memories, "What did Rowan teach you about the internet before?")
 assert "giant web of connected computers" in found, found
-claim = "I remember that Athe taught me the internet is a giant web of connected computers."
+claim = "I remember that Rowan taught me the internet is a giant web of connected computers."
 assert not false_past_claims([{"nanite": "Nanite Two", "text": claim}], "What do you remember?", "x").get("Nanite Two")
 told = "I remember Claude Code said a kind answer to Nanite One's question."
 assert not false_past_claims([{"nanite": "Nanite Three", "text": told}], "What do you remember?", "x").get("Nanite Three")
-made_up = "I remember Athe took me to the ocean last week."
+made_up = "I remember Rowan took me to the ocean last week."
 assert false_past_claims([{"nanite": "Nanite Two", "text": made_up}], "What do you remember?", "x").get("Nanite Two"), \
     "something it was never told is still flagged"
 recent = mind_mod.recent_memories_text(three, 20)
 assert "(the whole lesson is kept in my memory)" in recent or len(TEXT) < 400
-print("[ok] Recall finds what the lesson said; \"Athe taught me...\" counts as a real memory, made-up things do not")
+print("[ok] Recall finds what the lesson said; \"Rowan taught me...\" counts as a real memory, made-up things do not")
 
 # ---------------- 6. The export label ----------------
 examples = build_examples()
@@ -210,7 +211,7 @@ with patch.object(mind_mod, "think", brain), patch.object(turnrounds, "think", b
     mind.nanites["nanite_two"].energy = 100
     assert client.post("/api/lesson/next").status_code == 400, "no lesson yet"
     got = client.post("/api/lesson", json={"title": TITLE, "text": TEXT})
-    assert got.status_code == 200 and got.json()["by"] == "Athe", got.text
+    assert got.status_code == 200 and got.json()["by"] == "Rowan", got.text
     q = client.post("/api/lesson/next").json()
     while q["who"] != "Nanite Three":
         assert q["done"] is False and q["question"] is None or q["who"]
